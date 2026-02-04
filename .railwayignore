@@ -1,0 +1,37 @@
+# Dependencies
+node_modules
+src/ui/node_modules
+
+# Development
+*.log
+npm-debug.log*
+
+# Testing
+test
+*.test.ts
+*.spec.ts
+
+# Documentation
+*.md
+!README.md
+
+# IDE
+.vscode
+.idea
+.cursor
+
+# Git
+.git
+.gitignore
+
+# Environment (will be set via Railway)
+.env
+.env.local
+.env.*.local
+src/ui/.env
+src/ui/.env.local
+
+# Build artifacts (will be rebuilt)
+dist
+src/ui/dist
+*.tsbuildinfo
