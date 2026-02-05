@@ -1,8 +1,12 @@
 import express from 'express';
 import {z} from 'zod';
 import {pool} from '../db/transaction.js';
+import {familyRoutes} from '../family/familyController.js';
 
 export const apiRoutes = express.Router();
+
+// Mount family routes
+apiRoutes.use(familyRoutes);
 
 const electionQuerySchema = z.object({
 	election_id: z.string().uuid(),
