@@ -10,19 +10,23 @@ export interface FamilyGenerationResult {
 /**
  * Generate families deterministically for a given election.
  * Uses hierarchical fallback logic to compute family keys.
+ * When boothId is provided, only voters in that booth are processed (e.g. when a new booth is added).
  */
-export async function generateFamilies(electionId: string): Promise<FamilyGenerationResult> {
-	logger.info({electionId}, 'Starting family generation');
+export async function generateFamilies(electionId: string, boothId?: string): Promise<FamilyGenerationResult> {
+	logger.info({electionId, boothId}, 'Starting family generation');
 
 	const startTime = Date.now();
 
 	const result = await withTransaction(async (client) => {
-		// Step 0: Get total voter count for validation
-		const totalVotersResult = await client.query(`SELECT COUNT(*) as total FROM voters WHERE election_id = $1`, [electionId]);
+		// Step 0: Get voter count for scope (election only or election+booth)
+		const totalVotersResult = await client.query(
+			`SELECT COUNT(*) as total FROM voters WHERE election_id = $1 AND ($2::uuid IS NULL OR booth_id = $2)`,
+			[electionId, boothId ?? null],
+		);
 		const totalVoters = Number(totalVotersResult.rows[0]?.total ?? 0);
 
 		if (totalVoters === 0) {
-			logger.warn({electionId}, 'No voters found for election');
+			logger.warn({electionId, boothId}, 'No voters found for election' + (boothId ? ' and booth' : ''));
 			return {
 				voters_processed: 0,
 				families_created: 0,
@@ -30,10 +34,10 @@ export async function generateFamilies(electionId: string): Promise<FamilyGenera
 			};
 		}
 
-		logger.info({electionId, totalVoters}, 'Found voters to process');
+		logger.info({electionId, boothId, totalVoters}, 'Found voters to process');
 
-		// Step 1: Create temp table with computed family keys
-		await createTempFamilyKeys(client, electionId);
+		// Step 1: Create temp table with computed family keys (filtered by booth when provided)
+		await createTempFamilyKeys(client, electionId, boothId ?? null);
 
 		// Step 2: Insert distinct families (only new ones)
 		const familiesCreated = await insertDistinctFamilies(client, electionId);
@@ -41,11 +45,11 @@ export async function generateFamilies(electionId: string): Promise<FamilyGenera
 		// Step 3: Map voters to families
 		const votersUpdated = await mapVotersToFamilies(client, electionId);
 
-		// Step 4: Update member counts
-		const familiesUpdated = await updateMemberCounts(client, electionId);
+		// Step 4: Update member counts (only affected families when booth_id is set)
+		const familiesUpdated = await updateMemberCounts(client, electionId, boothId ?? null);
 
-		// Step 5: Validate all voters are assigned
-		await validateVoterAssignment(client, electionId);
+		// Step 5: Validate all voters in scope are assigned
+		await validateVoterAssignment(client, electionId, boothId ?? null);
 
 		// Clean up temp table
 		await client.query('DROP TABLE IF EXISTS temp_family_keys');
@@ -61,6 +65,7 @@ export async function generateFamilies(electionId: string): Promise<FamilyGenera
 	logger.info(
 		{
 			electionId,
+			boothId,
 			result,
 			durationMs,
 		},
@@ -81,8 +86,8 @@ export async function generateFamilies(electionId: string): Promise<FamilyGenera
  * 6. relation_name only (NEW)
  * 7. voter id (fallback)
  */
-async function createTempFamilyKeys(client: DbClient, electionId: string): Promise<void> {
-	logger.info({electionId}, 'Creating temp family keys table (7-level hierarchy)');
+async function createTempFamilyKeys(client: DbClient, electionId: string, boothId: string | null): Promise<void> {
+	logger.info({electionId, boothId}, 'Creating temp family keys table (7-level hierarchy)');
 
 	await client.query(
 		`
@@ -125,9 +130,9 @@ async function createTempFamilyKeys(client: DbClient, electionId: string): Promi
 				ELSE v.id::text
 			END as computed_family_key
 		FROM voters v
-		WHERE v.election_id = $1
+		WHERE v.election_id = $1 AND ($2::uuid IS NULL OR v.booth_id = $2)
 	`,
-		[electionId],
+		[electionId, boothId],
 	);
 
 	const countResult = await client.query(`SELECT COUNT(*) as cnt FROM temp_family_keys`);
@@ -207,10 +212,10 @@ async function mapVotersToFamilies(client: DbClient, electionId: string): Promis
 }
 
 /**
- * Step 4: Update member counts for all families
+ * Step 4: Update member counts. When boothId is set, only families for that booth are updated.
  */
-async function updateMemberCounts(client: DbClient, electionId: string): Promise<number> {
-	logger.info({electionId}, 'Updating family member counts');
+async function updateMemberCounts(client: DbClient, electionId: string, boothId: string | null): Promise<number> {
+	logger.info({electionId, boothId}, 'Updating family member counts');
 
 	const result = await client.query(
 		`
@@ -222,9 +227,9 @@ async function updateMemberCounts(client: DbClient, electionId: string): Promise
 			WHERE election_id = $1 AND family_id IS NOT NULL
 			GROUP BY family_id
 		) sub
-		WHERE f.id = sub.family_id
+		WHERE f.id = sub.family_id AND ($2::uuid IS NULL OR f.booth_id = $2)
 	`,
-		[electionId],
+		[electionId, boothId],
 	);
 
 	const familiesUpdated = result.rowCount ?? 0;
@@ -233,12 +238,15 @@ async function updateMemberCounts(client: DbClient, electionId: string): Promise
 }
 
 /**
- * Step 5: Validate all voters are assigned to families
+ * Step 5: Validate all voters in scope are assigned to families
  */
-async function validateVoterAssignment(client: DbClient, electionId: string): Promise<void> {
-	logger.info({electionId}, 'Validating voter assignments');
+async function validateVoterAssignment(client: DbClient, electionId: string, boothId: string | null): Promise<void> {
+	logger.info({electionId, boothId}, 'Validating voter assignments');
 
-	const result = await client.query(`SELECT COUNT(*) as unassigned FROM voters WHERE election_id = $1 AND family_id IS NULL`, [electionId]);
+	const result = await client.query(
+		`SELECT COUNT(*) as unassigned FROM voters WHERE election_id = $1 AND ($2::uuid IS NULL OR booth_id = $2) AND family_id IS NULL`,
+		[electionId, boothId],
+	);
 
 	const unassignedCount = Number(result.rows[0]?.unassigned ?? 0);
 

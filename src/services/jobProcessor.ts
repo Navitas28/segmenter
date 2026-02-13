@@ -98,11 +98,13 @@ export async function processNextJob(): Promise<void> {
 				UPDATE segmentation_jobs
 				SET status = 'completed',
 				    completed_at = NOW(),
-				    result = $2
+				    version = $2,
+				    result = $3
 				WHERE id = $1
 				`,
 				[
 					jobId,
+					job.version,
 					{
 						algorithm_ms: result.algorithm_ms,
 						db_write_ms: result.db_write_ms,
@@ -128,29 +130,16 @@ export async function processNextJob(): Promise<void> {
 		} catch (error) {
 			// Log error and mark job as failed
 			const errorId = uuidv4();
-			// #region agent log
-			fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-				method: 'POST',
-				headers: {'Content-Type': 'application/json'},
-				body: JSON.stringify({
-					location: 'jobProcessor.ts:128',
-					message: 'CATCH BLOCK - Error details',
-					data: {
-						errorId,
-						jobId,
-						errorType: typeof error,
-						errorConstructor: error?.constructor?.name,
-						errorMessage: error instanceof Error ? error.message : String(error),
-						errorStack: error instanceof Error ? error.stack : undefined,
-						errorKeys: error ? Object.keys(error) : [],
-					},
-					timestamp: Date.now(),
-					sessionId: 'debug-session',
-					hypothesisId: 'A',
-				}),
-			}).catch(() => {});
-			// #endregion
-			logger.error({error, errorId, jobId}, 'Segmentation failed');
+			logger.error(
+				{
+					error,
+					errorId,
+					jobId,
+					errorMessage: error instanceof Error ? error.message : String(error),
+					errorStack: error instanceof Error ? error.stack : undefined,
+				},
+				'Segmentation failed',
+			);
 
 			await client.query(`UPDATE segmentation_jobs SET status = 'failed' WHERE id = $1`, [jobId]);
 
@@ -159,21 +148,14 @@ export async function processNextJob(): Promise<void> {
 			throw error;
 		}
 	}).catch(async (error) => {
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({
-				location: 'jobProcessor.ts:139',
-				message: 'Transaction CATCH - Error details',
-				data: {errorType: typeof error, errorConstructor: error?.constructor?.name, errorMessage: error instanceof Error ? error.message : String(error), errorStack: error instanceof Error ? error.stack : undefined, currentJobId},
-				timestamp: Date.now(),
-				sessionId: 'debug-session',
-				hypothesisId: 'A',
-			}),
-		}).catch(() => {});
-		// #endregion
-		logger.error({error}, 'Job processing transaction failed');
+		logger.error(
+			{
+				error,
+				errorMessage: error instanceof Error ? error.message : String(error),
+				errorStack: error instanceof Error ? error.stack : undefined,
+			},
+			'Job processing transaction failed',
+		);
 		if (currentJobId) {
 			await markJobFailedOutsideTransaction(currentJobId, error);
 		}
@@ -265,7 +247,16 @@ async function insertException(client: DbClient, electionId: string, jobId: stri
  */
 async function markJobFailedOutsideTransaction(jobId: string, error: unknown): Promise<void> {
 	const errorId = uuidv4();
-	logger.error({error, errorId, jobId}, 'Marking job as failed (outside transaction)');
+	logger.error(
+		{
+			error,
+			errorId,
+			jobId,
+			errorMessage: error instanceof Error ? error.message : String(error),
+			errorStack: error instanceof Error ? error.stack : undefined,
+		},
+		'Marking job as failed (outside transaction)',
+	);
 
 	await withTransaction(async (client) => {
 		await client.query(`UPDATE segmentation_jobs SET status = 'failed' WHERE id = $1`, [jobId]);

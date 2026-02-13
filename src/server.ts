@@ -11,9 +11,9 @@ export function createServer() {
 	const __filename = fileURLToPath(import.meta.url);
 	const __dirname = path.dirname(__filename);
 
-	// API routes
-	app.use(jobRoutes);
-	app.use(apiRoutes);
+	// API routes (mounted under /api so frontend /api/* matches)
+	app.use('/api', jobRoutes);
+	app.use('/api', apiRoutes);
 
 	// Serve static files from the built frontend
 	const uiPath = path.join(__dirname, 'ui');

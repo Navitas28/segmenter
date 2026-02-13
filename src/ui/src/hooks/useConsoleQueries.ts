@@ -1,6 +1,5 @@
 import {useQuery} from '@tanstack/react-query';
-import {getAcNodes, getAuditLogs, getBooths, getDeterminismCheck, getElections, getExceptions, getJobStatus, getSegments} from '../services/api';
-import type {SegmentsResponse, Segment} from '../types/api';
+import {getAcNodes, getAuditLogs, getBooths, getDeterminismCheck, getElections, getExceptions, getHierarchyBoothNodes, getJobStatus, getSegments, getSegmentVersions} from '../services/api';
 
 export const useElections = () =>
 	useQuery({
@@ -22,6 +21,14 @@ export const useBooths = (electionId: string, nodeId?: string) =>
 		enabled: Boolean(electionId),
 	});
 
+/** Booth-level hierarchy nodes under an assembly (from hierarchy_nodes). */
+export const useHierarchyBoothNodes = (electionId: string, parentId: string) =>
+	useQuery({
+		queryKey: ['hierarchyBoothNodes', electionId, parentId],
+		queryFn: () => getHierarchyBoothNodes(electionId, parentId),
+		enabled: Boolean(electionId) && Boolean(parentId),
+	});
+
 export const useSegments = (nodeId: string, version?: number | null) =>
 	useQuery({
 		queryKey: ['segments', nodeId, version ?? 'latest'],
@@ -29,22 +36,11 @@ export const useSegments = (nodeId: string, version?: number | null) =>
 		enabled: Boolean(nodeId),
 	});
 
+/** Fetches available segment versions for a node from completed jobs (for version dropdown). */
 export const useVersions = (nodeId: string) =>
 	useQuery({
 		queryKey: ['versions', nodeId],
-		queryFn: async () => {
-			const response = await getSegments(nodeId);
-			const segments = Array.isArray(response) ? response : (response as SegmentsResponse).segments ?? [];
-			const versionCounts = new Map<number, number>();
-			segments.forEach((segment) => {
-				const version = Number(segment.version ?? segment.metadata?.version ?? segment.metadata?.version_number);
-				if (!Number.isNaN(version)) {
-					versionCounts.set(version, (versionCounts.get(version) ?? 0) + 1);
-				}
-			});
-			const versions = Array.from(versionCounts.keys()).sort((a, b) => b - a);
-			return {versions, versionCounts};
-		},
+		queryFn: () => getSegmentVersions(nodeId),
 		enabled: Boolean(nodeId),
 	});
 
@@ -67,7 +63,11 @@ export const useJobStatus = (jobId: string) =>
 		queryKey: ['jobStatus', jobId],
 		queryFn: () => getJobStatus(jobId),
 		enabled: Boolean(jobId),
-		refetchInterval: 3000,
+		refetchInterval: (query) => {
+			const status = query.state.data?.status;
+			if (status === 'completed' || status === 'failed' || status === 'cancelled') return false;
+			return 2000;
+		},
 	});
 
 export const useDeterminismCheck = (electionId: string, nodeId: string) =>

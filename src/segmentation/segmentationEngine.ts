@@ -1,5 +1,6 @@
 import {DbClient, withTransaction} from '../db/transaction.js';
 import {logger} from '../config/logger.js';
+import {resolveScopeAndVoters} from './scopeResolver.js';
 
 /**
  * Result of a segmentation run.
@@ -70,10 +71,17 @@ export async function runSegmentation(electionId: string, nodeId: string, versio
 	return withTransaction(async (client) => {
 		logger.info({electionId, nodeId, version}, 'Starting GeoHash fixed-precision segmentation (precision 7)');
 
+		// Resolve scope (AC or Booth) to booth IDs so we only segment voters in the selected scope
+		const {boothIds} = await resolveScopeAndVoters(client, nodeId, electionId);
+		if (boothIds.length === 0) {
+			throw new Error('No booths found for the selected assembly constituency or booth');
+		}
+		logger.info({nodeId, boothCount: boothIds.length}, 'Scope resolved; segmenting only voters in selected scope');
+
 		const algorithmStartTime = Date.now();
 
-		// STEP 1: Fetch families with GeoHash
-		const families = await fetchFamiliesWithGeoHash(client, electionId);
+		// STEP 1: Fetch families with GeoHash (only for the selected booths)
+		const families = await fetchFamiliesWithGeoHash(client, electionId, boothIds);
 
 		if (families.length === 0) {
 			throw new Error('No families found for segmentation');
@@ -113,73 +121,17 @@ export async function runSegmentation(electionId: string, nodeId: string, versio
 
 		const dbWriteDurationMs = Date.now() - dbWriteStartTime;
 
-		// STEP 7: Validation
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({location: 'segmentationEngine.ts:117', message: 'BEFORE validateAllFamiliesAssigned', data: {electionId}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E'}),
-		}).catch(() => {});
-		// #endregion
-		await validateAllFamiliesAssigned(client, electionId);
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({location: 'segmentationEngine.ts:117', message: 'AFTER validateAllFamiliesAssigned', data: {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E'}),
-		}).catch(() => {});
-		// #endregion
+		// STEP 7: Validation (scoped to this node's segments and families)
+		await validateAllFamiliesAssigned(client, electionId, boothIds, nodeId);
 
 		// Overlap validation: Check for interior overlap (not boundary touching)
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({location: 'segmentationEngine.ts:209', message: 'BEFORE validateNoOverlappingGeometry', data: {electionId}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E'}),
-		}).catch(() => {});
-		// #endregion
-		await validateNoOverlappingGeometry(client, electionId);
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({location: 'segmentationEngine.ts:209', message: 'AFTER validateNoOverlappingGeometry', data: {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E'}),
-		}).catch(() => {});
-		// #endregion
+		await validateNoOverlappingGeometry(client, electionId, nodeId);
 
 		// Geometry validity check
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({location: 'segmentationEngine.ts:224', message: 'BEFORE validateGeometryValidity', data: {electionId}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E'}),
-		}).catch(() => {});
-		// #endregion
-		await validateGeometryValidity(client, electionId);
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({location: 'segmentationEngine.ts:224', message: 'AFTER validateGeometryValidity', data: {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E'}),
-		}).catch(() => {});
-		// #endregion
+		await validateGeometryValidity(client, electionId, nodeId);
 
 		// Empty geometry check
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({location: 'segmentationEngine.ts:239', message: 'BEFORE validateNoEmptyGeometry', data: {electionId}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E'}),
-		}).catch(() => {});
-		// #endregion
-		await validateNoEmptyGeometry(client, electionId);
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({location: 'segmentationEngine.ts:239', message: 'AFTER validateNoEmptyGeometry', data: {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E'}),
-		}).catch(() => {});
-		// #endregion
+		await validateNoEmptyGeometry(client, electionId, nodeId);
 
 		// Compute deterministic hash
 		const runHash = await computeRunHash(client, nodeId);
@@ -222,8 +174,11 @@ export async function runSegmentation(electionId: string, nodeId: string, versio
 
 /**
  * Fetch families with GeoHash (STEP 1).
+ * Only returns families belonging to the given booth IDs (assembly constituency or single booth scope).
  */
-async function fetchFamiliesWithGeoHash(client: DbClient, electionId: string): Promise<Family[]> {
+async function fetchFamiliesWithGeoHash(client: DbClient, electionId: string, boothIds: string[]): Promise<Family[]> {
+	if (boothIds.length === 0) return [];
+
 	const result = await client.query<Family>(
 		`
 		SELECT
@@ -237,13 +192,14 @@ async function fetchFamiliesWithGeoHash(client: DbClient, electionId: string): P
 			) AS geohash
 		FROM families f
 		WHERE f.election_id = $1
+			AND f.booth_id::text = any($2::text[])
 			AND f.member_count > 0
 		ORDER BY ST_GeoHash(
 			ST_SetSRID(ST_MakePoint(f.longitude, f.latitude), 4326),
 			7
 		) ASC
 		`,
-		[electionId],
+		[electionId, boothIds],
 	);
 
 	return result.rows;
@@ -425,53 +381,10 @@ async function insertSegmentsWithGeometry(client: DbClient, segments: Segment[],
 		RETURNING id
 	`;
 
-	// #region agent log
-	fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-		method: 'POST',
-		headers: {'Content-Type': 'application/json'},
-		body: JSON.stringify({
-			location: 'segmentationEngine.ts:384',
-			message: 'BEFORE INSERT query',
-			data: {valuesCount: values.length, paramsCount: params.length, queryLength: insertQuery.length, firstValue: values[0], paramsSlice: params.slice(0, 15)},
-			timestamp: Date.now(),
-			sessionId: 'debug-session',
-			hypothesisId: 'C',
-		}),
-	}).catch(() => {});
-	// #endregion
 	let result;
 	try {
 		result = await client.query(insertQuery, params);
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({location: 'segmentationEngine.ts:384', message: 'AFTER INSERT query SUCCESS', data: {rowCount: result.rowCount}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'C'}),
-		}).catch(() => {});
-		// #endregion
 	} catch (err) {
-		// #region agent log
-		fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({
-				location: 'segmentationEngine.ts:384',
-				message: 'INSERT query FAILED',
-				data: {
-					errorType: typeof err,
-					errorMessage: err instanceof Error ? err.message : String(err),
-					errorStack: err instanceof Error ? err.stack : undefined,
-					errorCode: err?.code,
-					errorDetail: err?.detail,
-					queryLength: insertQuery.length,
-					paramsCount: params.length,
-				},
-				timestamp: Date.now(),
-				sessionId: 'debug-session',
-				hypothesisId: 'C,D',
-			}),
-		}).catch(() => {});
-		// #endregion
 		throw err;
 	}
 
@@ -536,19 +449,21 @@ async function insertSegmentMembersByFamily(client: DbClient, segments: Segment[
 }
 
 /**
- * Validate all families are assigned (STEP 7a).
+ * Validate all families in scope are assigned (STEP 7a).
  */
-async function validateAllFamiliesAssigned(client: DbClient, electionId: string): Promise<void> {
+async function validateAllFamiliesAssigned(client: DbClient, electionId: string, boothIds: string[], nodeId: string): Promise<void> {
 	const result = await client.query<{count: string}>(
 		`
 		SELECT COUNT(*) as count
 		FROM families f
 		LEFT JOIN segment_members sm ON sm.family_id = f.id
+			AND sm.segment_id IN (SELECT id FROM segments WHERE node_id = $3 AND status = 'draft')
 		WHERE f.election_id = $1
+			AND f.booth_id::text = any($2::text[])
 			AND f.member_count > 0
 			AND sm.id IS NULL
 		`,
-		[electionId],
+		[electionId, boothIds, nodeId],
 	);
 
 	const unassignedCount = parseInt(result.rows[0]?.count || '0', 10);
@@ -557,23 +472,26 @@ async function validateAllFamiliesAssigned(client: DbClient, electionId: string)
 		throw new Error(`Validation failed: ${unassignedCount} families not assigned to any segment`);
 	}
 
-	logger.info('Validation passed: All families assigned');
+	logger.info('Validation passed: All families in scope assigned');
 }
 
 /**
  * Validate no overlapping geometry (STEP 7b).
  * Uses ST_Overlaps to detect interior overlap only (boundary touching is allowed).
+ * Scoped to segments for this node only.
  */
-async function validateNoOverlappingGeometry(client: DbClient, electionId: string): Promise<void> {
+async function validateNoOverlappingGeometry(client: DbClient, electionId: string, nodeId: string): Promise<void> {
 	const result = await client.query<{count: string}>(
 		`
 		SELECT COUNT(*) as count
 		FROM segments a
 		JOIN segments b ON a.id <> b.id
 		WHERE a.election_id = $1
+			AND a.node_id = $2
+			AND b.node_id = $2
 			AND ST_Overlaps(a.geometry, b.geometry)
 		`,
-		[electionId],
+		[electionId, nodeId],
 	);
 
 	const overlapCount = parseInt(result.rows[0]?.count || '0', 10);
@@ -587,16 +505,18 @@ async function validateNoOverlappingGeometry(client: DbClient, electionId: strin
 
 /**
  * Validate all geometries are valid (STEP 7c).
+ * Scoped to segments for this node only.
  */
-async function validateGeometryValidity(client: DbClient, electionId: string): Promise<void> {
+async function validateGeometryValidity(client: DbClient, electionId: string, nodeId: string): Promise<void> {
 	const result = await client.query<{count: string}>(
 		`
 		SELECT COUNT(*) as count
 		FROM segments
 		WHERE election_id = $1
+			AND node_id = $2
 			AND NOT ST_IsValid(geometry)
 		`,
-		[electionId],
+		[electionId, nodeId],
 	);
 
 	const invalidCount = parseInt(result.rows[0]?.count || '0', 10);
@@ -610,16 +530,18 @@ async function validateGeometryValidity(client: DbClient, electionId: string): P
 
 /**
  * Validate no empty geometries (STEP 7d).
+ * Scoped to segments for this node only.
  */
-async function validateNoEmptyGeometry(client: DbClient, electionId: string): Promise<void> {
+async function validateNoEmptyGeometry(client: DbClient, electionId: string, nodeId: string): Promise<void> {
 	const result = await client.query<{count: string}>(
 		`
 		SELECT COUNT(*) as count
 		FROM segments
 		WHERE election_id = $1
+			AND node_id = $2
 			AND ST_IsEmpty(geometry)
 		`,
-		[electionId],
+		[electionId, nodeId],
 	);
 
 	const emptyCount = parseInt(result.rows[0]?.count || '0', 10);

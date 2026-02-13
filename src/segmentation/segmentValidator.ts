@@ -98,13 +98,6 @@ async function validateGeometryOverlaps(client: DbClient, segments: Segment[]): 
 		);
 	`);
 
-	// #region agent log
-	fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-		method: 'POST',
-		headers: {'Content-Type': 'application/json'},
-		body: JSON.stringify({location: 'segmentValidator.ts:119', message: 'Temp table created', data: {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'GEOM_VALIDATION'}),
-	}).catch(() => {});
-	// #endregion
 
 	// Insert all segment geometries
 	const insertValues: string[] = [];
@@ -117,20 +110,6 @@ async function validateGeometryOverlaps(client: DbClient, segments: Segment[]): 
 	});
 
 	// Insert geometries in chunks to avoid query size limits
-	// #region agent log
-	fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-		method: 'POST',
-		headers: {'Content-Type': 'application/json'},
-		body: JSON.stringify({
-			location: 'segmentValidator.ts:131',
-			message: 'Inserting geometries in chunks',
-			data: {totalSegments: segments.length, chunkSize: 20},
-			timestamp: Date.now(),
-			sessionId: 'debug-session',
-			hypothesisId: 'GEOM_VALIDATION',
-		}),
-	}).catch(() => {});
-	// #endregion
 
 	const chunkSize = 20;
 	for (let i = 0; i < segments.length; i += chunkSize) {
@@ -149,21 +128,7 @@ async function validateGeometryOverlaps(client: DbClient, segments: Segment[]): 
 		}
 	}
 
-	// #region agent log
-	fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-		method: 'POST',
-		headers: {'Content-Type': 'application/json'},
-		body: JSON.stringify({location: 'segmentValidator.ts:145', message: 'Geometries inserted', data: {totalInserted: segments.length}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'GEOM_VALIDATION'}),
-	}).catch(() => {});
-	// #endregion
 
-	// #region agent log
-	fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-		method: 'POST',
-		headers: {'Content-Type': 'application/json'},
-		body: JSON.stringify({location: 'segmentValidator.ts:151', message: 'Starting overlap query', data: {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'GEOM_VALIDATION'}),
-	}).catch(() => {});
-	// #endregion
 
 	// Check for overlaps
 	const overlapResult = await client.query<{count: number}>(
@@ -176,20 +141,6 @@ async function validateGeometryOverlaps(client: DbClient, segments: Segment[]): 
 		`,
 	);
 
-	// #region agent log
-	fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-		method: 'POST',
-		headers: {'Content-Type': 'application/json'},
-		body: JSON.stringify({
-			location: 'segmentValidator.ts:165',
-			message: 'Overlap query complete',
-			data: {overlapCount: overlapResult.rows[0]?.count || 0},
-			timestamp: Date.now(),
-			sessionId: 'debug-session',
-			hypothesisId: 'GEOM_VALIDATION',
-		}),
-	}).catch(() => {});
-	// #endregion
 
 	const overlapCount = overlapResult.rows[0]?.count || 0;
 

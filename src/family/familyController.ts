@@ -8,6 +8,7 @@ export const familyRoutes = express.Router();
 
 const electionIdSchema = z.object({
 	election_id: z.string().uuid(),
+	booth_id: z.string().uuid().optional(),
 });
 
 /**
@@ -47,7 +48,8 @@ familyRoutes.post('/generate-voter-data', async (req, res) => {
 
 /**
  * POST /generate-family
- * Generate families deterministically for a given election
+ * Generate families deterministically for a given election.
+ * Optional booth_id: when provided, only voters in that booth are processed (e.g. when a new booth is added).
  */
 familyRoutes.post('/generate-family', async (req, res) => {
 	const parsed = electionIdSchema.safeParse(req.body);
@@ -59,12 +61,12 @@ familyRoutes.post('/generate-family', async (req, res) => {
 		});
 	}
 
-	const {election_id} = parsed.data;
+	const {election_id, booth_id} = parsed.data;
 
 	try {
-		logger.info({election_id}, 'Received family generation request');
+		logger.info({election_id, booth_id}, 'Received family generation request');
 
-		const result = await generateFamilies(election_id);
+		const result = await generateFamilies(election_id, booth_id ?? undefined);
 
 		return res.status(200).json({
 			success: true,

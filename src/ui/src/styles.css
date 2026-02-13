@@ -2,6 +2,94 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Force light color scheme for all select elements */
+select {
+	-webkit-appearance: none;
+	-moz-appearance: none;
+	appearance: none;
+	background-color: #ffffff !important;
+	color-scheme: light;
+}
+
+/* Force white background on dropdown list - maximum specificity */
+select option,
+select option[value] {
+	background: #ffffff !important;
+	background-color: #ffffff !important;
+	color: #111827 !important;
+	padding: 8px 12px !important;
+	font-weight: normal !important;
+}
+
+select option:first-child {
+	color: #9ca3af !important;
+}
+
+/* Selected option styling */
+select option:checked,
+select option:checked[value] {
+	background: #3b82f6 !important;
+	background-color: #3b82f6 !important;
+	color: #ffffff !important;
+}
+
+/* Hover state */
+select option:hover,
+select option:hover[value] {
+	background: #f3f4f6 !important;
+	background-color: #f3f4f6 !important;
+	color: #111827 !important;
+}
+
+select:disabled {
+	opacity: 1;
+	background-color: #f9fafb;
+}
+
+/* Remove default dropdown arrow in IE */
+select::-ms-expand {
+	display: none;
+}
+
+/* Remove focus outline */
+select:focus {
+	outline: none;
+}
+
+/* Force light background on dropdown popup (webkit) */
+select::-webkit-calendar-picker-indicator {
+	filter: invert(0);
+}
+
+/* Webkit specific styles for dropdown list */
+select::-webkit-scrollbar {
+	width: 8px;
+}
+
+select::-webkit-scrollbar-track {
+	background: #f1f1f1;
+}
+
+select::-webkit-scrollbar-thumb {
+	background: #888;
+	border-radius: 4px;
+}
+
+select::-webkit-scrollbar-thumb:hover {
+	background: #555;
+}
+
+/* Firefox specific - force light theme */
+@-moz-document url-prefix() {
+	select {
+		color-scheme: light;
+	}
+	select option {
+		background: #ffffff;
+		color: #000000;
+	}
+}
+
 @layer base {
 	html {
 		font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;

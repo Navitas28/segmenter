@@ -132,7 +132,7 @@ const SegmentationConsole = () => {
 	};
 
 	return (
-		<div className='h-screen w-screen bg-slate-950 p-4 text-slate-100'>
+		<div className='dark h-screen w-screen bg-slate-950 p-4 text-slate-100'>
 			<div className='mb-4 text-lg font-semibold'>Segmentation Testing Console</div>
 			<div className='grid h-[calc(100%-3rem)] grid-cols-[320px,1fr,420px] gap-4'>
 				<div className='flex flex-col gap-4 overflow-auto pr-2'>

@@ -84,20 +84,6 @@ export async function growRegions(client: DbClient, assignments: Map<string, Cel
 		}
 	}
 
-	// #region agent log
-	fetch('http://127.0.0.1:7246/ingest/8859c6b7-464f-4642-bea1-fa31d63b931e', {
-		method: 'POST',
-		headers: {'Content-Type': 'application/json'},
-		body: JSON.stringify({
-			location: 'regionGrower.ts:75',
-			message: 'Cells categorized',
-			data: {normalCells: normalCells.length, oversizedCells: oversizedCells.length, oversizedCellVoters: oversizedCells.map((c) => c.voter_count)},
-			timestamp: Date.now(),
-			sessionId: 'debug-session',
-			hypothesisId: 'NEW',
-		}),
-	}).catch(() => {});
-	// #endregion
 
 	// Grow regions from normal cells only
 	for (const seedCell of normalCells) {

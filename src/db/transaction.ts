@@ -1,10 +1,20 @@
 import pg from 'pg';
 import {env} from '../config/env.js';
+import {logger} from '../config/logger.js';
 
 const {Pool} = pg;
 
 export const pool = new Pool({
 	connectionString: env.databaseUrl,
+	max: 20, // Maximum number of clients in the pool
+	idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+	connectionTimeoutMillis: 10000, // Return an error after 10 seconds if connection could not be established
+	allowExitOnIdle: false, // Don't exit when all clients are idle
+});
+
+// Handle pool-level errors to prevent unhandled exceptions
+pool.on('error', (err, client) => {
+	logger.error({err, clientAddress: client?.connection?.stream?.remoteAddress}, 'Unexpected error on idle client');
 });
 
 export type DbClient = pg.PoolClient;
