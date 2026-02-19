@@ -1,5 +1,5 @@
-import {DbClient} from '../db/transaction.js';
-import {logger} from '../config/logger.js';
+import {DbClient} from '../../db/transaction.js';
+import {logger} from '../../config/logger.js';
 import {ParentBoundary} from './parentBoundary.js';
 
 /**
@@ -29,9 +29,6 @@ export type GridCell = {
  * 3. Filter cells that intersect parent boundary
  * 4. Create temporary table with GIST index for spatial queries
  *
- * The grid cells are persisted in a temporary table for efficient
- * spatial indexing during the assignment and region growing phases.
- *
  * @param client - Database client within a transaction
  * @param boundary - Parent boundary containing all units
  * @param unitCount - Total number of atomic units
@@ -44,16 +41,15 @@ export async function buildAdaptiveGrid(client: DbClient, boundary: ParentBounda
 
 	logger.info({area_m2: boundary.area_m2, unitCount}, 'Building adaptive grid');
 
-	// Calculate adaptive grid size
-	// Target: each cell should contain ~1-2 units on average to allow region growing
-	// Note: Some cells may contain large indivisible families exceeding segment limits
-	// These will be flagged as exceptions for manual review
-	const targetCellArea = boundary.area_m2 / unitCount;
-	const gridSizeMeters = Math.sqrt(targetCellArea) * 0.7; // Balanced grid for region growing
+	const estimatedSegments = Math.max(1, Math.round(unitCount * 2.65 / 115));
+	const cellsPerSegment = 6;
+	const targetTotalCells = estimatedSegments * cellsPerSegment;
+	const rawGridSize = Math.sqrt(boundary.area_m2 / Math.max(targetTotalCells, unitCount * 0.5));
 
-	logger.info({gridSizeMeters}, 'Calculated grid size');
+	const gridSizeMeters = Math.max(50, Math.min(rawGridSize, 2000));
 
-	// Create temporary grid table
+	logger.info({gridSizeMeters, estimatedSegments, targetTotalCells}, 'Calculated grid size');
+
 	await client.query(`
 		DROP TABLE IF EXISTS temp_grid_cells;
 
@@ -65,20 +61,11 @@ export async function buildAdaptiveGrid(client: DbClient, boundary: ParentBounda
 		);
 	`);
 
-	// Generate grid and filter by boundary intersection
-	// IMPORTANT: ST_SquareGrid requires size in same units as geometry
-	// Since boundary is in SRID 4326 (degrees), convert meters to degrees
-	// At equator: 1 degree ≈ 111,320 meters
-	// We need to account for latitude for accurate conversion
 	const boundaryWKT = `ST_GeomFromGeoJSON('${JSON.stringify(boundary.geometry)}')`;
 
-	// Get the approximate center latitude of the boundary for degree conversion
 	const centerLatResult = await client.query<{lat: number}>(`SELECT ST_Y(ST_Centroid(${boundaryWKT})) as lat`);
 	const centerLat = centerLatResult.rows[0]?.lat || 0;
 
-	// Convert meters to degrees at this latitude
-	// 1 degree latitude ≈ 111,320 meters (constant)
-	// 1 degree longitude ≈ 111,320 * cos(latitude) meters (varies by latitude)
 	const metersPerDegree = 111320 * Math.cos((centerLat * Math.PI) / 180);
 	const gridSizeDegrees = gridSizeMeters / metersPerDegree;
 
@@ -109,12 +96,10 @@ export async function buildAdaptiveGrid(client: DbClient, boundary: ParentBounda
 		[gridSizeDegrees],
 	);
 
-	// Create spatial index for efficient lookups
 	await client.query(`
 		CREATE INDEX idx_temp_grid_cells_geom ON temp_grid_cells USING GIST (geom);
 	`);
 
-	// Retrieve all cells sorted deterministically (north to south, west to east)
 	const result = await client.query<{
 		cell_id: string;
 		geom_geojson: string;

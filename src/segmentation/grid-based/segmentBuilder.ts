@@ -1,5 +1,5 @@
-import {DbClient} from '../db/transaction.js';
-import {logger} from '../config/logger.js';
+import {DbClient} from '../../db/transaction.js';
+import {logger} from '../../config/logger.js';
 import {Region} from './regionGrower.js';
 import {AtomicUnit} from './atomicUnitBuilder.js';
 import {CellAssignment} from './cellAssigner.js';
@@ -14,8 +14,8 @@ export type Segment = {
 	code: string;
 	/** Segment geometry (polygon) */
 	geometry: {
-		type: 'Polygon';
-		coordinates: number[][][];
+		type: 'Polygon' | 'MultiPolygon';
+		coordinates: number[][][] | number[][][][];
 	};
 	/** Segment centroid */
 	centroid: {
@@ -40,8 +40,6 @@ export type Segment = {
  * 4. Compute centroid: ST_Centroid(geom)
  * 5. Extract voter IDs from atomic units
  *
- * Returns segments with complete geometries in GeoJSON format.
- *
  * @param client - Database client within a transaction
  * @param regions - Array of grown regions
  * @param assignments - Map of cell assignments
@@ -55,7 +53,6 @@ export async function buildSegments(client: DbClient, regions: Region[], assignm
 
 	logger.info({regionCount: regions.length}, 'Building segment geometries');
 
-	// Build unit lookup
 	const unitMap = new Map<string, AtomicUnit>();
 	for (const unit of units) {
 		unitMap.set(unit.id, unit);
@@ -67,7 +64,6 @@ export async function buildSegments(client: DbClient, regions: Region[], assignm
 		const region = regions[i];
 		const segmentCode = `SEG-${String(i + 1).padStart(3, '0')}`;
 
-		// Collect cell geometries for this region
 		const cellIds = region.cell_ids;
 
 		if (cellIds.length === 0) {
@@ -75,10 +71,11 @@ export async function buildSegments(client: DbClient, regions: Region[], assignm
 			continue;
 		}
 
-		// Build geometry using ST_UnaryUnion
 		const geomResult = await client.query<{
 			geometry_geojson: string;
 			centroid_geojson: string;
+			geom_type: string;
+			num_parts: number;
 		}>(
 			`
 			WITH region_cells AS (
@@ -93,23 +90,13 @@ export async function buildSegments(client: DbClient, regions: Region[], assignm
 			cleaned AS (
 				SELECT ST_Buffer(geom, 0) as geom
 				FROM unioned
-			),
-			as_polygon AS (
-				-- Convert MultiPolygon to Polygon by extracting largest polygon
-				SELECT CASE
-					WHEN ST_GeometryType(geom) = 'ST_MultiPolygon' THEN
-						(SELECT ST_GeometryN(geom, n)
-						 FROM generate_series(1, ST_NumGeometries(geom)) n
-						 ORDER BY ST_Area(ST_GeometryN(geom, n)) DESC
-						 LIMIT 1)
-					ELSE geom
-				END as geom
-				FROM cleaned
 			)
 			SELECT
 				ST_AsGeoJSON(geom)::text as geometry_geojson,
-				ST_AsGeoJSON(ST_Centroid(geom))::text as centroid_geojson
-			FROM as_polygon
+				ST_AsGeoJSON(ST_Centroid(geom))::text as centroid_geojson,
+				ST_GeometryType(geom) as geom_type,
+				ST_NumGeometries(geom) as num_parts
+			FROM cleaned
 			`,
 			[cellIds],
 		);
@@ -119,7 +106,21 @@ export async function buildSegments(client: DbClient, regions: Region[], assignm
 			throw new Error(`Failed to build geometry for region ${region.id}`);
 		}
 
-		// Collect voter IDs and unit IDs
+		const geomType = geomResult.rows[0].geom_type;
+		const numParts = Number(geomResult.rows[0].num_parts || 1);
+
+		if (geomType === 'ST_MultiPolygon' && numParts > 1) {
+			logger.warn(
+				{
+					regionId: region.id,
+					segmentCode,
+					numParts,
+					cellCount: cellIds.length,
+				},
+				'Region produced non-contiguous MultiPolygon — possible adjacency gap in BFS',
+			);
+		}
+
 		const unitIds = new Set<string>();
 		const voterIds: string[] = [];
 
@@ -143,7 +144,7 @@ export async function buildSegments(client: DbClient, regions: Region[], assignm
 			centroid: JSON.parse(geomResult.rows[0].centroid_geojson),
 			total_voters: voterIds.length,
 			total_families: unitIds.size,
-			voter_ids: voterIds.sort(), // Sort for determinism
+			voter_ids: voterIds.sort(),
 		};
 
 		segments.push(segment);

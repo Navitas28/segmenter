@@ -82,7 +82,7 @@ const CustomerConsole = () => {
 				<div className="flex-1 relative bg-gray-100">
 					<CustomerMapView segments={segments} selectedSegment={selectedSegment} />
 				</div>
-				<RightPanel segments={segments} selectedSegment={selectedSegment} />
+				<RightPanel segments={segments} selectedSegment={selectedSegment} nodeId={nodeId ?? null} />
 			</div>
 			<div className={`border-t border-gray-200 bg-white transition-all duration-300 ease-out ${auditPanelOpen ? 'h-52' : 'h-0'}`}>
 				<button

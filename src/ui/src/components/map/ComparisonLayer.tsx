@@ -50,35 +50,36 @@ const ComparisonLayer = ({map, segments, wedgeGeometries, selectedSegmentId, sho
 			if (showBoundaries) {
 				const geometry = wedgeGeometries.get(segment.id);
 				if (geometry) {
-					const path = geometry.path;
-					const polygon = new google.maps.Polygon({
-						paths: path,
-						strokeColor: color,
-						strokeOpacity: 0.55 * fade,
-						strokeWeight: 1.5,
-						fillColor: color,
-						fillOpacity: 0.05 * fade,
-						clickable: false,
-					});
-					polygon.setMap(map);
-					overlaysRef.current.polygons.push(polygon);
+					geometry.paths.forEach((path) => {
+						const polygon = new google.maps.Polygon({
+							paths: path,
+							strokeColor: color,
+							strokeOpacity: 0.55 * fade,
+							strokeWeight: 1.5,
+							fillColor: color,
+							fillOpacity: 0.05 * fade,
+							clickable: false,
+						});
+						polygon.setMap(map);
+						overlaysRef.current.polygons.push(polygon);
 
-					const dash = new google.maps.Polyline({
-						path,
-						strokeColor: color,
-						strokeOpacity: 0.7 * fade,
-						strokeWeight: 1,
-						icons: [
-							{
-								icon: {path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2},
-								offset: '0',
-								repeat: '8px',
-							},
-						],
-						clickable: false,
+						const dash = new google.maps.Polyline({
+							path,
+							strokeColor: color,
+							strokeOpacity: 0.7 * fade,
+							strokeWeight: 1,
+							icons: [
+								{
+									icon: {path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2},
+									offset: '0',
+									repeat: '8px',
+								},
+							],
+							clickable: false,
+						});
+						dash.setMap(map);
+						overlaysRef.current.polylines.push(dash);
 					});
-					dash.setMap(map);
-					overlaysRef.current.polylines.push(dash);
 				}
 			}
 

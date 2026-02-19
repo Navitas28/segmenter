@@ -321,6 +321,37 @@ apiRoutes.get('/segments', async (req, res) => {
 	}
 });
 
+/** Backfill boundary from geometry for segments that have null boundary. One-time fix for segments created before boundary was populated. */
+apiRoutes.post('/segments/backfill-boundaries', async (req, res) => {
+	const parsed = nodeQuerySchema.safeParse(req.query);
+	if (!parsed.success) {
+		return res.status(400).json({error: parsed.error.flatten()});
+	}
+	try {
+		const result = await pool.query(
+			`
+      WITH updated AS (
+        UPDATE segments s
+        SET boundary = ST_Multi((
+          SELECT dump.geom
+          FROM ST_Dump(s.geometry) AS dump
+          ORDER BY ST_Area(dump.geom::geography) DESC
+          LIMIT 1
+        ))
+        WHERE s.node_id = $1 AND s.boundary IS NULL AND s.geometry IS NOT NULL
+        RETURNING id
+      )
+      SELECT count(*)::int as updated_count FROM updated
+      `,
+			[parsed.data.node_id],
+		);
+		const updatedCount = result.rows[0]?.updated_count ?? 0;
+		return res.json({updated_count: updatedCount, message: `Backfilled boundary for ${updatedCount} segments`});
+	} catch (error) {
+		return res.status(500).json({error: error instanceof Error ? error.message : 'Unknown error'});
+	}
+});
+
 /** List available segment versions for a node (from completed jobs). Used for version dropdown. */
 apiRoutes.get('/segments/versions', async (req, res) => {
 	const parsed = nodeQuerySchema.safeParse(req.query);

@@ -133,7 +133,7 @@ const MapContainer = ({segments, baseSegments, compareSegments, booths, scopeTyp
 		if (!map) return;
 		const bounds = new google.maps.LatLngBounds();
 		for (const geometry of geometries) {
-			geometry.path.forEach((point) => bounds.extend(point));
+			geometry.paths.forEach((path) => path.forEach((point) => bounds.extend(point)));
 		}
 		if (bounds.isEmpty()) return;
 		map.fitBounds(bounds, FIT_PADDING);

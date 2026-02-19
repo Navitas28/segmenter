@@ -9,7 +9,9 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   DATABASE_URL: z.string().min(1),
-  LOG_LEVEL: z.string().default("info")
+  LOG_LEVEL: z.string().default("info"),
+  ENABLE_SEGMENT_BACKEND_VISUALIZATION: z.string().default("false"),
+  SEGMENTATION_STRATEGY: z.enum(["geo-hash", "grid-based"]).default("geo-hash"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -25,5 +27,7 @@ export const env = {
   supabaseUrl: parsed.data.SUPABASE_URL,
   supabaseServiceRoleKey: parsed.data.SUPABASE_SERVICE_ROLE_KEY,
   databaseUrl: parsed.data.DATABASE_URL,
-  logLevel: parsed.data.LOG_LEVEL
+  logLevel: parsed.data.LOG_LEVEL,
+  enableSegmentBackendVisualization: parsed.data.ENABLE_SEGMENT_BACKEND_VISUALIZATION === "true" || parsed.data.ENABLE_SEGMENT_BACKEND_VISUALIZATION === "1",
+  segmentationStrategy: parsed.data.SEGMENTATION_STRATEGY as "geo-hash" | "grid-based",
 };

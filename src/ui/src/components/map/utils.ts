@@ -50,18 +50,31 @@ export const getMemberLatLng = (member: SegmentMember) => {
 };
 
 export const toLatLngArray = (geometry: GeoJSON.Geometry | GeoJSON.Feature | GeoJSON.FeatureCollection) => {
+	const paths = toLatLngPathsArray(geometry);
+	return paths[0] ?? [];
+};
+
+/**
+ * Extracts all polygon paths from GeoJSON geometry (Polygon or MultiPolygon).
+ * For MultiPolygon, returns one path per polygon part - enables full rendering of all consequent blocks.
+ */
+export const toLatLngPathsArray = (geometry: GeoJSON.Geometry | GeoJSON.Feature | GeoJSON.FeatureCollection): {lat: number; lng: number}[][] => {
 	if ('type' in geometry && geometry.type === 'Feature') {
-		return toLatLngArray(geometry.geometry);
+		return geometry.geometry ? toLatLngPathsArray(geometry.geometry) : [];
 	}
 	if ('type' in geometry && geometry.type === 'FeatureCollection') {
 		const first = geometry.features[0]?.geometry;
-		return first ? toLatLngArray(first) : [];
+		return first ? toLatLngPathsArray(first) : [];
 	}
 	if (geometry.type === 'Polygon') {
-		return geometry.coordinates[0].map(([lng, lat]) => ({lat, lng}));
+		const ring = geometry.coordinates[0];
+		if (!ring?.length) return [];
+		return [ring.map(([lng, lat]) => ({lat, lng}))];
 	}
 	if (geometry.type === 'MultiPolygon') {
-		return geometry.coordinates[0]?.[0]?.map(([lng, lat]) => ({lat, lng})) ?? [];
+		return geometry.coordinates
+			.map((polygon) => (polygon[0] ?? []).map(([lng, lat]) => ({lat, lng})))
+			.filter((ring) => ring.length > 0);
 	}
 	return [];
 };
@@ -69,18 +82,19 @@ export const toLatLngArray = (geometry: GeoJSON.Geometry | GeoJSON.Feature | Geo
 export const getSegmentBounds = (segment: Segment) => {
 	const bounds = new google.maps.LatLngBounds();
 
-	// Prefer geometry (wedge) over boundary if available
-	if (segment.geometry) {
-		const path = toLatLngArray(segment.geometry);
-		path.forEach((point) => bounds.extend(point));
+	// Prefer contiguous geometry (from getSegmentBoundary) over convex hull
+	const boundary = getSegmentBoundary(segment);
+	if (boundary) {
+		const paths = toLatLngPathsArray(boundary);
+		paths.forEach((path) => path.forEach((point) => bounds.extend(point)));
 		if (!bounds.isEmpty()) return bounds;
 	}
 
-	// Fallback to boundary
-	const boundary = getSegmentBoundary(segment);
-	if (boundary) {
-		const path = toLatLngArray(boundary);
-		path.forEach((point) => bounds.extend(point));
+	// Fallback to geometry
+	if (segment.geometry) {
+		const paths = toLatLngPathsArray(segment.geometry);
+		paths.forEach((path) => path.forEach((point) => bounds.extend(point)));
+		if (!bounds.isEmpty()) return bounds;
 	}
 
 	// Include member locations

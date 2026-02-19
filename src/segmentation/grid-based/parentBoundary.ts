@@ -1,5 +1,5 @@
-import {DbClient} from '../db/transaction.js';
-import {logger} from '../config/logger.js';
+import {DbClient} from '../../db/transaction.js';
+import {logger} from '../../config/logger.js';
 import {AtomicUnit} from './atomicUnitBuilder.js';
 
 /**
@@ -22,8 +22,6 @@ export type ParentBoundary = {
  * Uses ST_ConcaveHull with 0.98 target percent to create a tight boundary
  * that follows the actual distribution of voters.
  *
- * This boundary defines the region where segmentation will occur.
- *
  * @param client - Database client within a transaction
  * @param units - Array of atomic units
  * @returns Parent boundary polygon with area
@@ -35,23 +33,43 @@ export async function computeParentBoundary(client: DbClient, units: AtomicUnit[
 
 	logger.info({unitCount: units.length}, 'Computing parent boundary');
 
-	// Collect all centroids and compute concave hull
-	const centroidPoints = units.map((unit) => {
-		const [lng, lat] = unit.centroid.coordinates;
-		return `ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)`;
-	});
+	await client.query(`
+		DROP TABLE IF EXISTS temp_boundary_points;
+		CREATE TEMP TABLE temp_boundary_points (
+			id serial PRIMARY KEY,
+			geom geometry(Point, 4326)
+		);
+	`);
+
+	const chunkSize = 2000;
+	for (let i = 0; i < units.length; i += chunkSize) {
+		const chunk = units.slice(i, i + chunkSize);
+		const values: string[] = [];
+		const params: unknown[] = [];
+
+		chunk.forEach((unit, idx) => {
+			values.push(`(ST_GeomFromGeoJSON($${idx + 1}))`);
+			params.push(JSON.stringify(unit.centroid));
+		});
+
+		await client.query(
+			`INSERT INTO temp_boundary_points (geom) VALUES ${values.join(', ')}`,
+			params,
+		);
+	}
 
 	const result = await client.query<{
 		boundary_geojson: string;
 		area_m2: number;
 	}>(
 		`
-		WITH centroids AS (
-			SELECT ST_Collect(ARRAY[${centroidPoints.join(',')}]) as geom_collection
+		WITH collected AS (
+			SELECT ST_Collect(geom) as geom_collection
+			FROM temp_boundary_points
 		),
 		hull AS (
 			SELECT ST_ConcaveHull(geom_collection, 0.98) as boundary
-			FROM centroids
+			FROM collected
 		)
 		SELECT
 			ST_AsGeoJSON(boundary)::text as boundary_geojson,
@@ -59,6 +77,8 @@ export async function computeParentBoundary(client: DbClient, units: AtomicUnit[
 		FROM hull
 		`,
 	);
+
+	await client.query(`DROP TABLE IF EXISTS temp_boundary_points`);
 
 	if (result.rowCount === 0 || !result.rows[0]) {
 		throw new Error('Failed to compute parent boundary');
