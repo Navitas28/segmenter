@@ -1,5 +1,5 @@
-import {DbClient} from '../db/transaction.js';
-import {logger} from '../config/logger.js';
+import {DbClient} from '../../db/transaction.js';
+import {logger} from '../../config/logger.js';
 import {AtomicUnit} from './atomicUnitBuilder.js';
 
 /**
@@ -40,7 +40,6 @@ export async function assignUnitsToCells(client: DbClient, units: AtomicUnit[]):
 
 	logger.info({unitCount: units.length}, 'Assigning atomic units to cells');
 
-	// Create temporary table for atomic units
 	await client.query(`
 		DROP TABLE IF EXISTS temp_atomic_units;
 
@@ -52,7 +51,6 @@ export async function assignUnitsToCells(client: DbClient, units: AtomicUnit[]):
 		);
 	`);
 
-	// Insert all atomic units
 	const insertValues: string[] = [];
 	const insertParams: unknown[] = [];
 
@@ -70,7 +68,6 @@ export async function assignUnitsToCells(client: DbClient, units: AtomicUnit[]):
 		insertParams,
 	);
 
-	// Assign units to cells based on spatial containment
 	const result = await client.query<{
 		cell_id: string;
 		unit_ids: string[];
@@ -80,15 +77,29 @@ export async function assignUnitsToCells(client: DbClient, units: AtomicUnit[]):
 	}>(
 		`
 		SELECT
-			c.cell_id,
-			array_agg(u.unit_id ORDER BY u.unit_id) as unit_ids,
-			SUM(u.voter_count)::int as voter_count,
-			c.centroid_lat,
-			c.centroid_lng
-		FROM temp_grid_cells c
-		JOIN temp_atomic_units u ON ST_Contains(c.geom, u.centroid)
-		GROUP BY c.cell_id, c.centroid_lat, c.centroid_lng
-		ORDER BY c.centroid_lat DESC, c.centroid_lng ASC
+			assigned.cell_id,
+			array_agg(assigned.unit_id ORDER BY assigned.unit_id) as unit_ids,
+			SUM(assigned.voter_count)::int as voter_count,
+			assigned.centroid_lat,
+			assigned.centroid_lng
+		FROM (
+			SELECT DISTINCT ON (u.unit_id)
+				c.cell_id,
+				u.unit_id,
+				u.voter_count,
+				c.centroid_lat,
+				c.centroid_lng
+			FROM temp_atomic_units u
+			CROSS JOIN LATERAL (
+				SELECT cell_id, centroid_lat, centroid_lng, geom
+				FROM temp_grid_cells
+				ORDER BY geom <-> u.centroid
+				LIMIT 1
+			) c
+			ORDER BY u.unit_id
+		) assigned
+		GROUP BY assigned.cell_id, assigned.centroid_lat, assigned.centroid_lng
+		ORDER BY assigned.centroid_lat DESC, assigned.centroid_lng ASC
 		`,
 	);
 
@@ -106,17 +117,11 @@ export async function assignUnitsToCells(client: DbClient, units: AtomicUnit[]):
 		});
 	}
 
-	// Validate that all units were assigned
 	const assignedUnits = Array.from(assignments.values()).flatMap((a) => a.unit_ids).length;
 
 	if (assignedUnits !== units.length) {
-		logger.warn(
-			{
-				totalUnits: units.length,
-				assignedUnits,
-				unassigned: units.length - assignedUnits,
-			},
-			'Some atomic units were not assigned to any cell',
+		throw new Error(
+			`ASSIGNMENT_FAILED: ${units.length - assignedUnits} of ${units.length} atomic units were not assigned to any cell`
 		);
 	}
 

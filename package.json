@@ -5,7 +5,7 @@
 	"type": "module",
 	"main": "dist/index.js",
 	"scripts": {
-		"dev": "tsx watch src/index.ts",
+		"dev": "tsx watch src/index.ts | jq .",
 		"build": "tsc -p tsconfig.json",
 		"build:ui": "cd src/ui && npm install && npm run build",
 		"build:all": "npm run build && npm run build:ui",

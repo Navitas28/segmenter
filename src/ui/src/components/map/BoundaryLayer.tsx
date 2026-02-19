@@ -74,17 +74,17 @@ const BoundaryLayer = ({
 			const geometry = wedgeGeometries.get(segment.id);
 			if (!geometry) return;
 
-			// Determine which path to use based on boundary style
-			let path: google.maps.LatLngLiteral[];
+			// Determine which paths to use based on boundary style
+			let pathsToRender: google.maps.LatLngLiteral[][];
 			if (boundaryStyle === 'wedge') {
-				path = geometry.path;
+				pathsToRender = geometry.paths;
 			} else if (boundaryStyle === 'bbox') {
 				const points = getSegmentPoints(segment);
-				path = points.length ? getBoundingBoxPath(points) : geometry.path;
+				pathsToRender = points.length ? [getBoundingBoxPath(points)] : geometry.paths;
 			} else {
 				// convexhull
 				const points = getSegmentPoints(segment);
-				path = points.length >= 3 ? buildConvexHull(points) : geometry.path;
+				pathsToRender = points.length >= 3 ? [buildConvexHull(points)] : geometry.paths;
 			}
 
 			const isSelected = segment.id === selectedSegmentId;
@@ -94,52 +94,55 @@ const BoundaryLayer = ({
 			const strokeWeight = isSelected ? 4 : isHovered ? 3.5 : 3;
 			const color = hashToColor(getSegmentCode(segment), version);
 
-			const polygon = new google.maps.Polygon({
-				paths: path,
-				strokeColor: color,
-				strokeOpacity: 0.95 * baseOpacity,
-				strokeWeight,
-				fillColor: color,
-				fillOpacity,
-				clickable: true,
-			});
-
-			polygon.setMap(map);
-			polygon.addListener('click', (event) => {
-				onSelectSegment(segment.id);
-				const bounds = getWedgeBounds(geometry);
-				if (!bounds.isEmpty()) {
-					map.fitBounds(bounds, 40);
-				}
-				if (infoWindow && event.latLng) {
-					infoWindow.setContent(buildWedgeTooltip(segment, geometry));
-					infoWindow.setPosition(event.latLng);
-					infoWindow.open(map);
-				}
-			});
-			polygon.addListener('mouseover', (event) => {
-				onHoverSegment(segment.id);
-				polygon.setOptions({
-					fillOpacity: 0.35 * baseOpacity,
-					strokeOpacity: 1,
-					strokeWeight: strokeWeight + 0.5,
-				});
-				if (infoWindow && event.latLng) {
-					infoWindow.setContent(buildWedgeTooltip(segment, geometry));
-					infoWindow.setPosition(event.latLng);
-					infoWindow.open(map);
-				}
-			});
-			polygon.addListener('mouseout', () => {
-				onHoverSegment(null);
-				polygon.setOptions({
-					fillOpacity,
+			// Create one polygon per path (enables full MultiPolygon / consequent blocks rendering)
+			pathsToRender.forEach((path) => {
+				const polygon = new google.maps.Polygon({
+					paths: path,
+					strokeColor: color,
 					strokeOpacity: 0.95 * baseOpacity,
 					strokeWeight,
+					fillColor: color,
+					fillOpacity,
+					clickable: true,
 				});
-				if (infoWindow) infoWindow.close();
+
+				polygon.setMap(map);
+				polygon.addListener('click', (event) => {
+					onSelectSegment(segment.id);
+					const bounds = getWedgeBounds(geometry);
+					if (!bounds.isEmpty()) {
+						map.fitBounds(bounds, 40);
+					}
+					if (infoWindow && event.latLng) {
+						infoWindow.setContent(buildWedgeTooltip(segment, geometry));
+						infoWindow.setPosition(event.latLng);
+						infoWindow.open(map);
+					}
+				});
+				polygon.addListener('mouseover', (event) => {
+					onHoverSegment(segment.id);
+					polygon.setOptions({
+						fillOpacity: 0.35 * baseOpacity,
+						strokeOpacity: 1,
+						strokeWeight: strokeWeight + 0.5,
+					});
+					if (infoWindow && event.latLng) {
+						infoWindow.setContent(buildWedgeTooltip(segment, geometry));
+						infoWindow.setPosition(event.latLng);
+						infoWindow.open(map);
+					}
+				});
+				polygon.addListener('mouseout', () => {
+					onHoverSegment(null);
+					polygon.setOptions({
+						fillOpacity,
+						strokeOpacity: 0.95 * baseOpacity,
+						strokeWeight,
+					});
+					if (infoWindow) infoWindow.close();
+				});
+				overlaysRef.current.polygons.push(polygon);
 			});
-			overlaysRef.current.polygons.push(polygon);
 
 			if (visualizationMode === 'debug') {
 				const points = getSegmentPoints(segment);
@@ -172,17 +175,19 @@ const BoundaryLayer = ({
 				}
 
 				if (debugOptions.showRawGeometry && showGeometryBounds) {
-					const rawOverlay = new google.maps.Polygon({
-						paths: path,
-						strokeColor: '#f97316',
-						strokeOpacity: 0.8 * baseOpacity,
-						strokeWeight: 1,
-						fillColor: '#f97316',
-						fillOpacity: 0.03 * baseOpacity,
-						clickable: false,
+					pathsToRender.forEach((path) => {
+						const rawOverlay = new google.maps.Polygon({
+							paths: path,
+							strokeColor: '#f97316',
+							strokeOpacity: 0.8 * baseOpacity,
+							strokeWeight: 1,
+							fillColor: '#f97316',
+							fillOpacity: 0.03 * baseOpacity,
+							clickable: false,
+						});
+						rawOverlay.setMap(map);
+						overlaysRef.current.polygons.push(rawOverlay);
 					});
-					rawOverlay.setMap(map);
-					overlaysRef.current.polygons.push(rawOverlay);
 				}
 			}
 		});

@@ -56,6 +56,12 @@ export const getSegments = (nodeId: string, version?: number | null) => {
 	return fetchJson<SegmentsResponse | Segment[]>(`/segments?${params.toString()}`);
 };
 
+/** Backfill boundary from geometry for segments with null boundary. Use when map shows dots instead of blocks. */
+export const backfillSegmentsBoundaries = (nodeId: string) =>
+	fetchJson<{updated_count: number; message: string}>(`/segments/backfill-boundaries?node_id=${encodeURIComponent(nodeId)}`, {
+		method: 'POST',
+	});
+
 /** Available segment versions for a node (from completed jobs). */
 export const getSegmentVersions = (nodeId: string) =>
 	fetchJson<{versions: number[]}>(`/segments/versions?node_id=${encodeURIComponent(nodeId)}`);

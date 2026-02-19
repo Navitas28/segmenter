@@ -231,7 +231,7 @@ export const generateSegmentationPdfHtml = async (pool: Pool, versionId: string)
 	const voterCounts = segments.map((s) => s.total_voters);
 	const minVoters = voterCounts.length > 0 ? Math.min(...voterCounts) : 0;
 	const maxVoters = voterCounts.length > 0 ? Math.max(...voterCounts) : 0;
-	const oversizedSegments = segments.filter((s) => s.total_voters > 165).length;
+	const oversizedSegments = segments.filter((s) => s.total_voters > 135).length;
 	const undersizedSegments = segments.filter((s) => s.total_voters < 90).length;
 
 	// Area statistics (in sq km) for context
@@ -243,7 +243,7 @@ export const generateSegmentationPdfHtml = async (pool: Pool, versionId: string)
 	// Generate suggestions
 	const suggestions: string[] = [];
 	if (oversizedSegments > 0) {
-		suggestions.push(`${oversizedSegments} segment(s) exceed the recommended size of 165 voters. Consider splitting these segments for better manageability.`);
+		suggestions.push(`${oversizedSegments} segment(s) exceed the recommended size of 135 voters. Consider splitting these segments for better manageability.`);
 	}
 	if (undersizedSegments > 0) {
 		suggestions.push(`${undersizedSegments} segment(s) are below the minimum recommended size of 90 voters. Consider merging with adjacent segments.`);
@@ -499,7 +499,7 @@ export const generateSegmentationPdfHtml = async (pool: Pool, versionId: string)
 						<td>${s.total_families}</td>
 						<td>${s.area_sq_m != null ? (s.area_sq_m / 1_000_000).toFixed(2) : 'N/A'}</td>
 						<td>${
-							s.total_voters > 165
+							s.total_voters > 135
 								? '<span class="exception-badge critical">Oversized</span>'
 								: s.total_voters < 90
 									? '<span class="exception-badge warning">Undersized</span>'

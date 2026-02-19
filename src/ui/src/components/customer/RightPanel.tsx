@@ -1,17 +1,18 @@
 import {useState} from 'react';
 import {useMutation, useQueryClient} from '@tanstack/react-query';
 import {useNavigate} from 'react-router-dom';
-import {Save, Users, Home, ChevronLeft, ChevronRight, Edit3, X, List, Ruler} from 'lucide-react';
-import {updateSegment} from '../../services/api';
+import {Save, Users, Home, ChevronLeft, ChevronRight, Edit3, X, List, Ruler, MapPin} from 'lucide-react';
+import {updateSegment, backfillSegmentsBoundaries} from '../../services/api';
 import {useCustomerStore} from '../../store/useCustomerStore';
 import type {Segment} from '../../types/api';
 
 interface RightPanelProps {
 	segments: Segment[];
 	selectedSegment: Segment | null;
+	nodeId?: string | null;
 }
 
-const RightPanel = ({segments, selectedSegment}: RightPanelProps) => {
+const RightPanel = ({segments, selectedSegment, nodeId}: RightPanelProps) => {
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
 	const {rightSidebarCollapsed, toggleRightSidebar} = useCustomerStore();
@@ -25,6 +26,13 @@ const RightPanel = ({segments, selectedSegment}: RightPanelProps) => {
 		onSuccess: () => {
 			queryClient.invalidateQueries({queryKey: ['segments']});
 			setIsEditing(false);
+		},
+	});
+
+	const backfillMutation = useMutation({
+		mutationFn: () => (nodeId ? backfillSegmentsBoundaries(nodeId) : Promise.reject(new Error('No node selected'))),
+		onSuccess: (data) => {
+			queryClient.invalidateQueries({queryKey: ['segments']});
 		},
 	});
 
@@ -123,14 +131,28 @@ const RightPanel = ({segments, selectedSegment}: RightPanelProps) => {
 							</div>
 						</div>
 						{segments.length > 0 && (
-							<button
-								type="button"
-								onClick={() => navigate('/customer/segments-details')}
-								className="w-full h-9 flex items-center justify-center gap-2 text-sm font-medium text-blue-700 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors border border-blue-200"
-							>
-								<List size={14} />
-								<span>View all segment details</span>
-							</button>
+							<div className="flex flex-col gap-2">
+								<button
+									type="button"
+									onClick={() => navigate('/customer/segments-details')}
+									className="w-full h-9 flex items-center justify-center gap-2 text-sm font-medium text-blue-700 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors border border-blue-200"
+								>
+									<List size={14} />
+									<span>View all segment details</span>
+								</button>
+								{nodeId && (
+									<button
+										type="button"
+										onClick={() => backfillMutation.mutate()}
+										disabled={backfillMutation.isPending}
+										title="If map shows dots instead of blocks, click to fix"
+										className="w-full h-9 flex items-center justify-center gap-2 text-sm font-medium text-amber-700 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition-colors border border-amber-200 disabled:opacity-50"
+									>
+										<MapPin size={14} />
+										<span>{backfillMutation.isPending ? 'Fixing…' : 'Fix map display'}</span>
+									</button>
+								)}
+							</div>
 						)}
 					</div>
 				) : (

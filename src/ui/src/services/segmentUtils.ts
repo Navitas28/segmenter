@@ -13,7 +13,10 @@ export const getSegmentMembers = (segment: Segment): SegmentMember[] => {
 	return members ?? [];
 };
 
+/** Returns geometry for map display. Prefers contiguous blocks (geometry) over convex hull (boundary_geojson). */
 export const getSegmentBoundary = (segment: Segment) =>
+	segment.geometry ??
+	(segment.metadata?.geometry as GeoJSON.Geometry | GeoJSON.Feature | GeoJSON.FeatureCollection | undefined) ??
 	segment.boundary_geojson ??
 	(segment.metadata?.boundary_geojson as GeoJSON.Geometry | GeoJSON.Feature | GeoJSON.FeatureCollection | undefined) ??
 	(segment.metadata?.boundaryGeoJson as GeoJSON.Geometry | GeoJSON.Feature | GeoJSON.FeatureCollection | undefined) ??

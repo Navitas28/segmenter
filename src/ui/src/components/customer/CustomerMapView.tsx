@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from 'react';
 import {useCustomerStore, type MapTypeId} from '../../store/useCustomerStore';
 import {loadGoogleMaps} from '../../services/maps';
 import type {Segment} from '../../types/api';
+import {buildConvexHull, getSegmentPoints, hashToColor, toLatLngPathsArray} from '../map/utils';
 
 interface CustomerMapViewProps {
 	segments: Segment[];
@@ -157,70 +158,63 @@ const CustomerMapView = ({segments, selectedSegment}: CustomerMapViewProps) => {
 		segments.forEach((segment) => {
 			if (!layers.boundaries) return;
 
-			// Get exterior ring: Polygon coordinates[0] = ring; MultiPolygon coordinates[0][0] = first polygon's ring
-			let raw: [number, number][] = [];
+			// Prefer geometry (contiguous union of tiles) over boundary_geojson (convex hull)
 			const geom = segment.geometry ?? segment.boundary_geojson;
-			if (geom && typeof geom === 'object' && 'coordinates' in geom) {
-				const coords = (geom as {coordinates: unknown}).coordinates as unknown[];
-				const first = coords[0];
-				const type = (geom as {type?: string}).type;
-				if (type === 'MultiPolygon' && Array.isArray(first) && Array.isArray((first as unknown[])[0])) {
-					raw = (((first as [number, number][][])[0]) ?? []) as [number, number][];
-				} else if (Array.isArray(first) && first.length > 0) {
-					// Polygon: first is ring [[lng,lat],[lng,lat],...]; MultiPolygon first is array of rings
-					const elem = (first as unknown[])[0];
-					const isRing = Array.isArray(elem) && elem.length >= 2 && typeof elem[0] === 'number';
-					raw = isRing ? (first as [number, number][]) : ((((first as [number, number][][])[0]) ?? []) as [number, number][]);
-				}
-			}
-			const coordinates = raw
-				.map(([lng, lat]: [number, number]) => toLatLng(lat, lng))
-				.filter((c): c is {lat: number; lng: number} => c != null);
+			// Use raw paths so each geohash cell renders with its segment's distinct color (dots per segment)
+			let paths = geom ? toLatLngPathsArray(geom) : [];
 
-			if (coordinates.length === 0) return;
+			// Fallback: when backend geometry is missing/empty, build convex hull from member positions so 7 segments show as regions (not 326 dots)
+			if (paths.length === 0) {
+				const points = getSegmentPoints(segment);
+				const hullPath = points.length >= 3 ? buildConvexHull(points) : [];
+				if (hullPath.length >= 3) paths = [hullPath];
+			}
+			if (paths.length === 0) return;
 
 			// Calculate segment height based on voter count (for visual depth)
 			const voterCount = segment.total_voters ?? 0;
 			const maxVoters = Math.max(...segments.map(s => s.total_voters ?? 0));
 			const normalizedHeight = maxVoters > 0 ? voterCount / maxVoters : 0;
 
-			// Create polygon with enhanced styling
+			// Create polygon(s) - one per segment when using convex hull, or per path otherwise
 			const isSelected = selectedSegment?.id === segment.id;
-			const segmentColor = segment.color ?? '#3b82f6';
+			// Use segment color from API, or hash-based color so each segment has a distinct color
+			const segmentColor = segment.color ?? hashToColor(segment.id, null);
 			const highlight = layers.dimMap;
-			const baseFillOpacity = highlight ? 0.45 : 0.2;
-			const selectedFillOpacity = highlight ? 0.65 : 0.35;
-			const baseStrokeWeight = highlight ? 2.5 : 2;
-			const selectedStrokeWeight = highlight ? 4 : 3;
+			const baseFillOpacity = highlight ? 0.5 : 0.35;
+			const selectedFillOpacity = highlight ? 0.7 : 0.5;
+			const baseStrokeWeight = highlight ? 3 : 2.5;
+			const selectedStrokeWeight = highlight ? 5 : 4;
 
-			const polygon = new google.maps.Polygon({
-				paths: coordinates,
-				strokeColor: isSelected ? '#1e40af' : segmentColor,
-				strokeOpacity: 0.9,
-				strokeWeight: isSelected ? selectedStrokeWeight : baseStrokeWeight,
-				fillColor: segmentColor,
-				fillOpacity: isSelected ? selectedFillOpacity : baseFillOpacity,
-				map: googleMapRef.current,
-				clickable: true,
-				zIndex: isSelected ? 1000 : Math.floor(normalizedHeight * 100),
-			});
-
-			// Click handler
-			polygon.addListener('click', () => {
-				setSelectedSegmentId(segment.id);
-			});
-
-			// Hover effects with info window
-			polygon.addListener('mouseover', (e: google.maps.MapMouseEvent) => {
-				polygon.setOptions({
-					fillOpacity: highlight ? 0.7 : 0.45,
-					strokeWeight: highlight ? 4.5 : 3,
-					strokeColor: '#1e40af',
+			paths.forEach((coordinates) => {
+				const polygon = new google.maps.Polygon({
+					paths: coordinates,
+					strokeColor: isSelected ? '#1e40af' : segmentColor,
+					strokeOpacity: 1,
+					strokeWeight: isSelected ? selectedStrokeWeight : baseStrokeWeight,
+					fillColor: segmentColor,
+					fillOpacity: isSelected ? selectedFillOpacity : baseFillOpacity,
+					map: googleMapRef.current,
+					clickable: true,
+					zIndex: isSelected ? 1000 : 100 + Math.floor(normalizedHeight * 50),
 				});
 
-				// Show tooltip
-				if (infoWindowRef.current && e.latLng) {
-					const content = `
+				// Click handler
+				polygon.addListener('click', () => {
+					setSelectedSegmentId(segment.id);
+				});
+
+				// Hover effects with info window
+				polygon.addListener('mouseover', (e: google.maps.MapMouseEvent) => {
+					polygon.setOptions({
+						fillOpacity: highlight ? 0.7 : 0.45,
+						strokeWeight: highlight ? 4.5 : 3,
+						strokeColor: '#1e40af',
+					});
+
+					// Show tooltip
+					if (infoWindowRef.current && e.latLng) {
+						const content = `
 						<div style="padding: 8px; font-family: system-ui;">
 							<div style="font-weight: 600; font-size: 14px; color: #111827; margin-bottom: 6px;">
 								${segment.display_name ?? segment.segment_name ?? 'Segment'}
@@ -233,29 +227,30 @@ const CustomerMapView = ({segments, selectedSegment}: CustomerMapViewProps) => {
 							</div>
 						</div>
 					`;
-					infoWindowRef.current.setContent(content);
-					infoWindowRef.current.setPosition(e.latLng);
-					infoWindowRef.current.open(googleMapRef.current);
-				}
-			});
-
-			polygon.addListener('mouseout', () => {
-				polygon.setOptions({
-					fillOpacity: isSelected ? selectedFillOpacity : baseFillOpacity,
-					strokeWeight: isSelected ? selectedStrokeWeight : baseStrokeWeight,
-					strokeColor: isSelected ? '#1e40af' : segmentColor,
+						infoWindowRef.current.setContent(content);
+						infoWindowRef.current.setPosition(e.latLng);
+						infoWindowRef.current.open(googleMapRef.current);
+					}
 				});
 
-				// Close tooltip
-				if (infoWindowRef.current) {
-					infoWindowRef.current.close();
-				}
+				polygon.addListener('mouseout', () => {
+					polygon.setOptions({
+						fillOpacity: isSelected ? selectedFillOpacity : baseFillOpacity,
+						strokeWeight: isSelected ? selectedStrokeWeight : baseStrokeWeight,
+						strokeColor: isSelected ? '#1e40af' : segmentColor,
+					});
+
+					// Close tooltip
+					if (infoWindowRef.current) {
+						infoWindowRef.current.close();
+					}
+				});
+
+				polygonsRef.current.push(polygon);
+
+				// Extend bounds
+				coordinates.forEach((coord) => bounds.extend(coord));
 			});
-
-			polygonsRef.current.push(polygon);
-
-			// Extend bounds
-			coordinates.forEach((coord) => bounds.extend(coord));
 
 			// Add label with AdvancedMarkerElement (only with valid numeric lat/lng)
 			const centroidPos = toLatLng(segment.centroid_lat, segment.centroid_lng);
@@ -307,7 +302,7 @@ const CustomerMapView = ({segments, selectedSegment}: CustomerMapViewProps) => {
 			// Voter positions (lat/lng) when layer is on – use Circle overlays to avoid Advanced Markers API issues
 			if (layers.showVoters && voterOverlaysRef.current.length < MAX_VOTER_OVERLAYS && (segment.members ?? segment.voters ?? []).length > 0) {
 				const list = segment.members ?? segment.voters ?? [];
-				const segColor = segment.color ?? '#6b7280';
+				const segColor = segment.color ?? hashToColor(segment.id, null);
 				for (const m of list) {
 					if (voterOverlaysRef.current.length >= MAX_VOTER_OVERLAYS) break;
 					const pos = toLatLng(m.latitude, m.longitude);

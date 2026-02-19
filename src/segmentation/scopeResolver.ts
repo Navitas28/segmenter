@@ -112,8 +112,7 @@ async function fetchVoters(client: DbClient, boothIds: string[], electionId: str
 
 	const votersResult = await client.query(
 		`
-    select id, election_id, booth_id, family_id, section_number,
-           latitude, longitude, address
+    select id, election_id, booth_id, family_id, latitude, longitude, address
     from voters
     where booth_id::text = any($1::text[])
       and election_id = $2
@@ -121,20 +120,15 @@ async function fetchVoters(client: DbClient, boothIds: string[], electionId: str
 		[boothIds, electionId],
 	);
 
-	return votersResult.rows.map((row) => {
-		const parsedSection = row.section_number !== null ? Number(row.section_number) : null;
-		const sectionNumber = parsedSection !== null && Number.isNaN(parsedSection) ? null : parsedSection;
-
-		return {
-			id: String(row.id),
-			election_id: String(row.election_id),
-			booth_id: row.booth_id ? String(row.booth_id) : null,
-			family_id: row.family_id ? String(row.family_id) : null,
-			section_number: sectionNumber,
-			latitude: row.latitude !== null ? Number(row.latitude) : null,
-			longitude: row.longitude !== null ? Number(row.longitude) : null,
-			house_number: null,
-			address: row.address ? String(row.address) : null,
-		};
-	});
+	return votersResult.rows.map((row) => ({
+		id: String(row.id),
+		election_id: String(row.election_id),
+		booth_id: row.booth_id ? String(row.booth_id) : null,
+		family_id: row.family_id ? String(row.family_id) : null,
+		section_number: null,
+		latitude: row.latitude !== null ? Number(row.latitude) : null,
+		longitude: row.longitude !== null ? Number(row.longitude) : null,
+		house_number: null,
+		address: row.address ? String(row.address) : null,
+	}));
 }

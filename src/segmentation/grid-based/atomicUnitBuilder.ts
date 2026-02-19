@@ -1,5 +1,5 @@
-import {DbClient} from '../db/transaction.js';
-import {logger} from '../config/logger.js';
+import {DbClient} from '../../db/transaction.js';
+import {logger} from '../../config/logger.js';
 
 /**
  * Represents a single atomic unit (family or address-based grouping).
@@ -25,19 +25,15 @@ export type AtomicUnit = {
  * Groups voters by family_id, or falls back to address + floor_number.
  * Each atomic unit must remain together in the final segmentation.
  *
- * Algorithm:
- * - Group by COALESCE(family_id, md5(address || floor_number), id)
- * - Compute centroid using ST_Centroid(ST_Collect(location))
- * - Return array of atomic units with their centroids
- *
- * This function operates entirely in the database for performance.
- *
  * @param client - Database client within a transaction
  * @param electionId - Election ID to filter voters
+ * @param boothIds - Booth IDs to scope voters
  * @returns Array of atomic units sorted deterministically by ID
  */
-export async function buildAtomicUnits(client: DbClient, electionId: string): Promise<AtomicUnit[]> {
-	logger.info({electionId}, 'Building atomic units from voters');
+export async function buildAtomicUnits(client: DbClient, electionId: string, boothIds: string[]): Promise<AtomicUnit[]> {
+	logger.info({electionId, boothCount: boothIds.length}, 'Building atomic units from voters');
+
+	if (boothIds.length === 0) return [];
 
 	const result = await client.query<{
 		id: string;
@@ -57,6 +53,7 @@ export async function buildAtomicUnits(client: DbClient, electionId: string): Pr
 				v.location
 			FROM voters v
 			WHERE v.election_id = $1
+				AND v.booth_id::text = any($2::text[])
 				AND v.location IS NOT NULL
 		),
 		atomic_units AS (
@@ -76,7 +73,7 @@ export async function buildAtomicUnits(client: DbClient, electionId: string): Pr
 		FROM atomic_units
 		ORDER BY unit_id
 		`,
-		[electionId],
+		[electionId, boothIds],
 	);
 
 	const units: AtomicUnit[] = result.rows.map((row) => ({

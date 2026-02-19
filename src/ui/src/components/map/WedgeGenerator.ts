@@ -1,6 +1,6 @@
 import type {Segment} from '../../types/api';
 import {getSegmentCentroidLatLng, getSegmentMembers} from '../../services/segmentUtils';
-import {getMemberLatLng, toLatLngArray} from './utils';
+import {buildConvexHull, getMemberLatLng, getSegmentPoints, toLatLngPathsArray} from './utils';
 
 export type WedgeGeometry = {
 	segmentId: string;
@@ -9,7 +9,10 @@ export type WedgeGeometry = {
 	maxAngle: number;
 	angleSpan: number;
 	radiusMeters: number;
+	/** Primary path (first polygon) - kept for backward compatibility */
 	path: google.maps.LatLngLiteral[];
+	/** All polygon paths - used for MultiPolygon to render every part as consequent blocks */
+	paths: google.maps.LatLngLiteral[][];
 	labelPosition: google.maps.LatLngLiteral;
 };
 
@@ -153,16 +156,29 @@ const buildLabelPosition = (center: google.maps.LatLngLiteral, minAngle: number,
 };
 
 /**
- * Build wedge geometry from persisted geometry column (preferred method)
+ * Build wedge geometry from persisted geometry column (preferred method).
+ * Supports MultiPolygon: extracts all polygon parts as `paths` for full consequent-block rendering.
+ * Falls back to convex hull of member points when geometry is missing or empty.
  */
 export const buildWedgeGeometryFromGeometry = (segment: Segment): WedgeGeometry | null => {
-	// Use persisted geometry if available
-	if (segment.geometry) {
-		const path = toLatLngArray(segment.geometry);
-		if (path.length === 0) return null;
+	// Prefer geometry (contiguous union of tiles) over boundary_geojson (convex hull)
+	const geom = segment.geometry ?? segment.boundary_geojson;
+	let paths: {lat: number; lng: number}[][] = geom ? toLatLngPathsArray(geom) : [];
 
-		// Extract center (first point in the wedge polygon)
-		const center = path[0];
+	// Fallback: when backend geometry is missing/empty, build convex hull from member positions
+	if (paths.length === 0) {
+		const points = getSegmentPoints(segment);
+		const hullPath = points.length >= 3 ? buildConvexHull(points) : [];
+		if (hullPath.length >= 3) paths = [hullPath];
+	}
+	if (paths.length > 0) {
+
+		// Primary path is first polygon (for backward compat and centroid)
+		const path = paths[0];
+		if (!path?.length) return null;
+
+		// Use segment centroid for center when available (better for MultiPolygon)
+		const center = getSegmentCentroidLatLng(segment) ?? path[0];
 		if (!center) return null;
 
 		// Extract angles from metadata if available
@@ -170,12 +186,14 @@ export const buildWedgeGeometryFromGeometry = (segment: Segment): WedgeGeometry 
 		const minAngle = toNumber(metadata?.min_angle);
 		const maxAngle = toNumber(metadata?.max_angle);
 
-		// Compute bounds to get radius
+		// Compute radius from all paths
 		let maxDistance = 0;
-		path.forEach((point) => {
-			const distance = haversineMeters(center, point);
-			if (distance > maxDistance) maxDistance = distance;
-		});
+		paths.forEach((p) =>
+			p.forEach((point) => {
+				const distance = haversineMeters(center, point);
+				if (distance > maxDistance) maxDistance = distance;
+			}),
+		);
 
 		const radiusMeters = maxDistance > 0 ? maxDistance : DEFAULT_RADIUS_METERS;
 		const angleSpan = minAngle !== null && maxAngle !== null ? maxAngle - minAngle : Math.PI / 6;
@@ -190,6 +208,7 @@ export const buildWedgeGeometryFromGeometry = (segment: Segment): WedgeGeometry 
 			angleSpan,
 			radiusMeters,
 			path,
+			paths,
 			labelPosition: buildLabelPosition(center, effectiveMinAngle, angleSpan, radiusMeters),
 		};
 	}
@@ -208,6 +227,7 @@ export const buildWedgeGeometryFromMetadata = (segment: Segment): WedgeGeometry 
 	const radiusMeters = getRadiusMeters(segment, center);
 	const arcPoints = buildArcPoints(center, angleRange.min, angleRange.span, radiusMeters);
 	if (!arcPoints.length) return null;
+	const path = [center, ...arcPoints, center];
 	return {
 		segmentId: segment.id,
 		center,
@@ -215,7 +235,8 @@ export const buildWedgeGeometryFromMetadata = (segment: Segment): WedgeGeometry 
 		maxAngle: angleRange.max,
 		angleSpan: angleRange.span,
 		radiusMeters,
-		path: [center, ...arcPoints, center],
+		path,
+		paths: [path],
 		labelPosition: buildLabelPosition(center, angleRange.min, angleRange.span, radiusMeters),
 	};
 };
@@ -244,14 +265,14 @@ export const buildWedgeGeometries = (segments: Segment[]) => {
 
 export const getWedgeBounds = (geometry: WedgeGeometry) => {
 	const bounds = new google.maps.LatLngBounds();
-	geometry.path.forEach((point) => bounds.extend(point));
+	geometry.paths.forEach((path) => path.forEach((point) => bounds.extend(point)));
 	return bounds;
 };
 
 export const getWedgesBounds = (geometries: Iterable<WedgeGeometry>) => {
 	const bounds = new google.maps.LatLngBounds();
 	for (const geometry of geometries) {
-		geometry.path.forEach((point) => bounds.extend(point));
+		geometry.paths.forEach((path) => path.forEach((point) => bounds.extend(point)));
 	}
 	return bounds;
 };
