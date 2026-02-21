@@ -8,7 +8,7 @@ const App = () => {
 	return (
 		<BrowserRouter>
 			<Routes>
-				<Route path="/" element={<Navigate to="/customer" replace />} />
+				<Route path="/" element={<Navigate to="/customer/history" replace />} />
 				<Route path="/admin" element={<SegmentationConsole />} />
 				<Route path="/customer" element={<CustomerConsole />} />
 				<Route path="/customer/history" element={<SegmentationHistory />} />
