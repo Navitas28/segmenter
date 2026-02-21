@@ -66,7 +66,7 @@ jobRoutes.get('/jobs/history', async (req, res) => {
 		let query = supabase
 			.from('segmentation_jobs')
 			.select(
-				'id, election_id, node_id, job_type, status, version, version_name, version_description, result, created_at, completed_at, created_by, elections(name), hierarchy_nodes(name, code), profiles!segmentation_jobs_created_by_fkey(email)',
+				'id, election_id, node_id, job_type, status, version, version_name, version_description, result, created_at, completed_at, created_by, elections(name), hierarchy_nodes(name, code, parent_id), profiles!segmentation_jobs_created_by_fkey(email)',
 				{ count: 'exact' },
 			)
 			.order('created_at', { ascending: false })
@@ -115,6 +115,7 @@ jobRoutes.get('/jobs/history', async (req, res) => {
 			election_name: row.elections?.name ?? null,
 			node_name: row.hierarchy_nodes?.name ?? null,
 			node_code: row.hierarchy_nodes?.code ?? null,
+			node_parent_id: row.hierarchy_nodes?.parent_id ?? null,
 			created_by_email: row.profiles?.email ?? null,
 		}));
 

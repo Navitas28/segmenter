@@ -153,7 +153,19 @@ const SegmentationHistory = () => {
 	};
 
 	const handleViewSegmentation = (job: any) => {
+		// node_parent_id tells us the scope:
+		//   null  → job was run on an AC node (assembly scope)
+		//   set   → job was run on a booth node (booth is child of that AC)
+		const isBooth = !!job.node_parent_id;
 		setElectionId(job.election_id);
+		setScopeType(isBooth ? 'booth' : 'ac');
+		if (isBooth) {
+			setAssemblyId(job.node_parent_id);
+			setBoothId(job.node_id);
+		} else {
+			setAssemblyId(job.node_id);
+			setBoothId('');
+		}
 		setNodeId(job.node_id);
 		setJobId(job.id);
 		setSelectedVersion(job.version);
