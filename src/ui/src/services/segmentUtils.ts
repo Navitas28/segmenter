@@ -1,4 +1,5 @@
 import type {Segment, SegmentMember} from '../types/api';
+import type * as GeoJSON from 'geojson';
 
 export const getSegmentHash = (segment: Segment) => segment.segment_hash ?? segment.hash ?? (segment.metadata?.segment_hash as string | undefined) ?? (segment.metadata?.hash as string | undefined) ?? null;
 

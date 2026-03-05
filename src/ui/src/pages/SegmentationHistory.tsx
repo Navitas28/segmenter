@@ -22,6 +22,7 @@ import {useNavigate} from 'react-router-dom';
 import {useElections, useAcNodes, useHierarchyBoothNodes} from '../hooks/useConsoleQueries';
 import {getSegmentationHistory, postSegmentationJob} from '../services/api';
 import {useCustomerStore} from '../store/useCustomerStore';
+import JobErrorBanner from '../components/JobErrorBanner';
 
 const ITEMS_PER_PAGE = 8;
 
@@ -79,6 +80,16 @@ const SegmentationHistory = () => {
 	const [filterElectionId, setFilterElectionId] = useState('');
 	const [filterAssemblyId, setFilterAssemblyId] = useState('');
 	const [filterBoothId, setFilterBoothId] = useState('');
+	const [expandedErrorJobs, setExpandedErrorJobs] = useState<Set<string>>(new Set());
+
+	const toggleError = (jobId: string) => {
+		setExpandedErrorJobs((prev) => {
+			const next = new Set(prev);
+			if (next.has(jobId)) next.delete(jobId);
+			else next.add(jobId);
+			return next;
+		});
+	};
 
 	/* ── modal state ── */
 	const [showModal, setShowModal] = useState(false);
@@ -389,7 +400,7 @@ const SegmentationHistory = () => {
 										return (
 											<div
 												key={job.id}
-												className="px-5 py-4 hover:bg-blue-50/40 transition-colors group"
+												className="px-5 py-4 hover:bg-blue-50/40 transition-colors group flex flex-col gap-3"
 											>
 												<div className="flex items-center gap-4">
 													{/* Status icon circle */}
@@ -456,14 +467,24 @@ const SegmentationHistory = () => {
 													{/* View button */}
 													<button
 														type="button"
-														onClick={() => handleViewSegmentation(job)}
-														disabled={job.status !== 'completed'}
-														className="h-8 px-4 text-xs font-semibold text-blue-600 border border-blue-200 hover:bg-blue-600 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400 rounded-lg transition-all flex items-center gap-1.5 shrink-0"
+														onClick={() => {
+															if (job.status === 'failed') toggleError(job.id);
+															else handleViewSegmentation(job);
+														}}
+														disabled={job.status !== 'completed' && job.status !== 'failed'}
+														className={`h-8 px-4 text-xs font-semibold ${
+															job.status === 'failed' && expandedErrorJobs.has(job.id)
+																? 'bg-blue-600 text-white'
+																: 'text-blue-600 border border-blue-200 hover:bg-blue-600 hover:text-white'
+														} disabled:opacity-40 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400 rounded-lg transition-all flex items-center gap-1.5 shrink-0`}
 													>
 														<Eye size={13} />
 														View
 													</button>
 												</div>
+												{job.status === 'failed' && job.result?.error && (
+													<JobErrorBanner error={job.result.error} details={job.result.details} forceExpanded={expandedErrorJobs.has(job.id)} />
+												)}
 											</div>
 										);
 									})}

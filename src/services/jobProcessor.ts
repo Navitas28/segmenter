@@ -2,6 +2,7 @@ import {v4 as uuidv4} from 'uuid';
 import {logger} from '../config/logger.js';
 import {withTransaction, DbClient} from '../db/transaction.js';
 import {runSegmentation} from '../segmentation/segmentationEngine.js';
+import {PreCheckError} from '../segmentation/grid-based/gridEngine.js';
 
 type JobRow = {
 	id: string;
@@ -141,7 +142,13 @@ export async function processNextJob(): Promise<void> {
 				'Segmentation failed',
 			);
 
-			await client.query(`UPDATE segmentation_jobs SET status = 'failed' WHERE id = $1`, [jobId]);
+			await client.query(
+				`UPDATE segmentation_jobs SET status = 'failed', result = $2 WHERE id = $1`,
+				[jobId, {
+					error: error instanceof Error ? error.message : String(error),
+					details: error instanceof PreCheckError ? error.details : undefined
+				}]
+			);
 
 			await insertException(client, job.election_id, jobId, errorId, error);
 
@@ -259,7 +266,13 @@ async function markJobFailedOutsideTransaction(jobId: string, error: unknown): P
 	);
 
 	await withTransaction(async (client) => {
-		await client.query(`UPDATE segmentation_jobs SET status = 'failed' WHERE id = $1`, [jobId]);
+		await client.query(
+			`UPDATE segmentation_jobs SET status = 'failed', result = $2 WHERE id = $1`,
+			[jobId, {
+				error: error instanceof Error ? error.message : String(error),
+				details: error instanceof PreCheckError ? error.details : undefined
+			}]
+		);
 
 		const jobResult = await client.query(`SELECT election_id FROM segmentation_jobs WHERE id = $1`, [jobId]);
 

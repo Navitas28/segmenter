@@ -1,3 +1,4 @@
+import type * as GeoJSON from 'geojson';
 export type Election = {
 	id: string;
 	name?: string;
@@ -102,6 +103,8 @@ export type JobStatusResponse = {
 		db_write_ms?: number;
 		validation_ms?: number;
 		total_ms?: number;
+		error?: string;
+		details?: any;
 		integrity_checks?: {
 			all_families_assigned?: boolean;
 			no_overlaps?: boolean;

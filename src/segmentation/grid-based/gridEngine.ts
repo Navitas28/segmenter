@@ -1,5 +1,6 @@
 import {DbClient, withTransaction} from '../../db/transaction.js';
 import {logger} from '../../config/logger.js';
+import {env} from '../../config/env.js';
 import {resolveScopeAndVoters} from '../scopeResolver.js';
 import {SegmentationResult} from '../types.js';
 import {buildAtomicUnits} from './atomicUnitBuilder.js';
@@ -38,6 +39,10 @@ export async function runGridSegmentation(electionId: string, nodeId: string, ve
 			throw new Error('No booths found for the selected assembly constituency or booth');
 		}
 		logger.info({nodeId, boothCount: boothIds.length}, 'Scope resolved; segmenting only voters in selected scope');
+
+		if (env.enablePreSegmentationChecks) {
+			await performPreSegmentationChecks(client, electionId, boothIds, nodeId);
+		}
 
 		const algorithmStartTime = Date.now();
 
@@ -137,6 +142,146 @@ export async function runGridSegmentation(electionId: string, nodeId: string, ve
 
 		return result;
 	});
+}
+export class PreCheckError extends Error {
+	public details: any;
+	constructor(message: string, details: any) {
+		super(message);
+		this.name = 'PreCheckError';
+		this.details = details;
+	}
+}
+
+
+/**
+ * Perform pre-segmentation checks to ensure data integrity before running the spatial algorithm.
+ * Validates that voters have locations and the families table is synced with the voters table.
+ */
+async function performPreSegmentationChecks(client: DbClient, electionId: string, boothIds: string[], nodeId: string): Promise<void> {
+	logger.info({electionId, boothCount: boothIds.length, nodeId}, 'Running pre-segmentation data integrity checks');
+	const errors: any[] = [];
+
+	// 1. Check for voters without locations
+	const unlocatedVotersResult = await client.query<{id: string; full_name: string; epic_number: string}>(
+		`
+		SELECT id, full_name, epic_number
+		FROM voters
+		WHERE election_id = $1
+			AND booth_id::text = any($2::text[])
+			AND location IS NULL
+		LIMIT 100
+		`,
+		[electionId, boothIds]
+	);
+
+	if ((unlocatedVotersResult.rowCount ?? 0) > 0) {
+		const sampleIds = unlocatedVotersResult.rows.slice(0, 10).map(r => r.id);
+		logger.error(
+			{electionId, nodeId, sampleVoterIds: sampleIds},
+			'Pre-check failed: Found voters without geographic coordinates'
+		);
+		errors.push({
+			type: 'unlocated_voters',
+			voters: unlocatedVotersResult.rows
+		});
+	}
+
+	// 2. Check if families table is out of sync with voters table
+	// i.e., member_count in families table doesn't match the actual number of voters
+	const unsyncedFamiliesResult = await client.query<{id: string; expected_count: number; actual_count: number}>(
+		`
+		WITH actual_counts AS (
+			SELECT family_id, COUNT(*) as count
+			FROM voters
+			WHERE election_id = $1 AND booth_id::text = any($2::text[]) AND family_id IS NOT NULL
+			GROUP BY family_id
+		)
+		SELECT f.id, f.member_count as expected_count, COALESCE(ac.count, 0) as actual_count
+		FROM families f
+		LEFT JOIN actual_counts ac ON f.id = ac.family_id
+		WHERE f.election_id = $1
+			AND f.booth_id::text = any($2::text[])
+			AND f.member_count != COALESCE(ac.count, 0)
+			AND f.member_count > 0
+		LIMIT 100
+		`,
+		[electionId, boothIds]
+	);
+
+	if ((unsyncedFamiliesResult.rowCount ?? 0) > 0) {
+		const offendingFamilies = unsyncedFamiliesResult.rows.slice(0, 10).map(r => `${r.id} (expected ${r.expected_count}, found ${r.actual_count})`);
+		logger.error(
+			{electionId, nodeId, offendingFamilies},
+			'Pre-check failed: families table member_count is out of sync with voters table'
+		);
+		errors.push({
+			type: 'unsynced_families',
+			families: unsyncedFamiliesResult.rows
+		});
+	}
+
+	// 3. Check for phantom families (present in families table but no voters reference them)
+	const phantomFamiliesResult = await client.query<{id: string}>(
+		`
+		SELECT f.id
+		FROM families f
+		WHERE f.election_id = $1
+			AND f.booth_id::text = any($2::text[])
+			AND NOT EXISTS (
+				SELECT 1 FROM voters v
+				WHERE v.family_id = f.id
+			)
+		LIMIT 100
+		`,
+		[electionId, boothIds]
+	);
+
+	if ((phantomFamiliesResult.rowCount ?? 0) > 0) {
+		const sampleIds = phantomFamiliesResult.rows.slice(0, 10).map(r => r.id);
+		logger.error(
+			{electionId, nodeId, sampleFamilyIds: sampleIds},
+			'Pre-check failed: Found phantom families (no voters reference these family IDs)'
+		);
+		errors.push({
+			type: 'phantom_families',
+			families: phantomFamiliesResult.rows
+		});
+	}
+
+	// 4. Check for voters missing family_id
+	const unassignedVotersResult = await client.query<{id: string; full_name: string; epic_number: string}>(
+		`
+		SELECT id, full_name, epic_number
+		FROM voters
+		WHERE election_id = $1
+			AND booth_id::text = any($2::text[])
+			AND family_id IS NULL
+		LIMIT 100
+		`,
+		[electionId, boothIds]
+	);
+
+	if ((unassignedVotersResult.rowCount ?? 0) > 0) {
+		const sampleIds = unassignedVotersResult.rows.slice(0, 10).map(r => r.id);
+		logger.error(
+			{electionId, nodeId, sampleVoterIds: sampleIds},
+			'Pre-check failed: Found voters not assigned to any family'
+		);
+		errors.push({
+			type: 'unassigned_voters',
+			voters: unassignedVotersResult.rows
+		});
+	}
+	
+	// Aggregate potential multiple errors instead of failing on the first one
+	if (errors.length > 0) {
+		throw new PreCheckError(`PRE_CHECK_FAILED: ${errors.length} condition(s) failed`, {
+			type: 'multiple_errors',
+			errors
+		});
+	}
+	
+	logger.info('Pre-segmentation checks passed');
 }
 
 /**
@@ -288,9 +433,9 @@ async function insertSegmentMembers(
 }
 
 async function validateAllFamiliesAssigned(client: DbClient, electionId: string, boothIds: string[], nodeId: string): Promise<void> {
-	const result = await client.query<{count: string}>(
+	const result = await client.query<{id: string}>(
 		`
-		SELECT COUNT(*) as count
+		SELECT f.id
 		FROM families f
 		LEFT JOIN segment_members sm ON sm.family_id = f.id
 			AND sm.segment_id IN (SELECT id FROM segments WHERE node_id = $3 AND status = 'draft')
@@ -298,74 +443,90 @@ async function validateAllFamiliesAssigned(client: DbClient, electionId: string,
 			AND f.booth_id::text = any($2::text[])
 			AND f.member_count > 0
 			AND sm.id IS NULL
+		LIMIT 100
 		`,
 		[electionId, boothIds, nodeId],
 	);
 
-	const unassignedCount = parseInt(result.rows[0]?.count || '0', 10);
-	if (unassignedCount > 0) {
-		throw new Error(`Validation failed: ${unassignedCount} families not assigned to any segment`);
+	if ((result.rowCount ?? 0) > 0) {
+		const sampleIds = result.rows.slice(0, 10).map((r) => r.id);
+		throw new PreCheckError(`Validation failed: ${result.rowCount} families not assigned to any segment (Sample IDs: ${sampleIds.join(', ')})`, {
+			type: 'unassigned_families',
+			families: result.rows
+		});
 	}
 	logger.info('Validation passed: All families in scope assigned');
 }
 
 async function validateNoOverlappingGeometry(client: DbClient, electionId: string, nodeId: string): Promise<void> {
-	const result = await client.query<{count: string}>(
+	const result = await client.query<{a_id: string; b_id: string}>(
 		`
-		SELECT COUNT(*) as count
+		SELECT a.id as a_id, b.id as b_id
 		FROM segments a
 		JOIN segments b ON a.id <> b.id
 		WHERE a.election_id = $1
 			AND a.node_id = $2
 			AND b.node_id = $2
 			AND ST_Overlaps(a.geometry, b.geometry)
+		LIMIT 100
 		`,
 		[electionId, nodeId],
 	);
 
-	const overlapCount = parseInt(result.rows[0]?.count || '0', 10);
-	if (overlapCount > 0) {
-		throw new Error(`Validation failed: ${overlapCount} segment pairs have interior overlapping geometry`);
+	if ((result.rowCount ?? 0) > 0) {
+		const samplePairs = result.rows.slice(0, 5).map((r) => `(${r.a_id}, ${r.b_id})`);
+		throw new PreCheckError(`Validation failed: ${result.rowCount} segment pairs have interior overlapping geometry (Sample pairs: ${samplePairs.join(', ')})`, {
+			type: 'overlapping_geometry',
+			segment_pairs: result.rows
+		});
 	}
 	logger.info('Validation passed: No interior overlap detected');
 }
 
 async function validateGeometryValidity(client: DbClient, electionId: string, nodeId: string): Promise<void> {
-	const result = await client.query<{count: string}>(
+	const result = await client.query<{id: string}>(
 		`
-		SELECT COUNT(*) as count
+		SELECT id
 		FROM segments
 		WHERE election_id = $1
 			AND node_id = $2
 			AND NOT ST_IsValid(geometry)
+		LIMIT 100
 		`,
 		[electionId, nodeId],
 	);
 
-	const invalidCount = parseInt(result.rows[0]?.count || '0', 10);
-	if (invalidCount > 0) {
-		throw new Error(`Validation failed: ${invalidCount} segments have invalid geometry`);
+	if ((result.rowCount ?? 0) > 0) {
+		const sampleIds = result.rows.slice(0, 10).map((r) => r.id);
+		throw new PreCheckError(`Validation failed: ${result.rowCount} segments have invalid geometry (Sample IDs: ${sampleIds.join(', ')})`, {
+			type: 'invalid_geometry',
+			segments: result.rows
+		});
 	}
 	logger.info('Validation passed: All geometries are valid');
 }
 
 async function validateNoEmptyGeometry(client: DbClient, electionId: string, nodeId: string): Promise<void> {
-	const result = await client.query<{count: string}>(
+	const result = await client.query<{id: string}>(
 		`
-		SELECT COUNT(*) as count
+		SELECT id
 		FROM segments
 		WHERE election_id = $1
 			AND node_id = $2
-			AND ST_IsEmpty(geometry)
+			AND (geometry IS NULL OR ST_IsEmpty(geometry))
+		LIMIT 100
 		`,
 		[electionId, nodeId],
 	);
 
-	const emptyCount = parseInt(result.rows[0]?.count || '0', 10);
-	if (emptyCount > 0) {
-		throw new Error(`Validation failed: ${emptyCount} segments have empty geometry`);
+	if ((result.rowCount ?? 0) > 0) {
+		const sampleIds = result.rows.slice(0, 10).map((r) => r.id);
+		throw new PreCheckError(`Validation failed: ${result.rowCount} segments have empty geometry (Sample IDs: ${sampleIds.join(', ')})`, {
+			type: 'empty_geometry',
+			segments: result.rows
+		});
 	}
-	logger.info('Validation passed: No empty geometries');
+	logger.info('Validation passed: No empty geometries detected');
 }
 
 async function computeRunHash(client: DbClient, nodeId: string): Promise<string> {

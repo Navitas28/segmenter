@@ -14,7 +14,7 @@ export const pool = new Pool({
 
 // Handle pool-level errors to prevent unhandled exceptions
 pool.on('error', (err, client) => {
-	logger.error({err, clientAddress: client?.connection?.stream?.remoteAddress}, 'Unexpected error on idle client');
+	logger.error({err, clientAddress: (client as any)?.connection?.stream?.remoteAddress}, 'Unexpected error on idle client');
 });
 
 export type DbClient = pg.PoolClient;

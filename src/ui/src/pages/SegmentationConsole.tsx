@@ -15,6 +15,7 @@ import DeterminismPanel from '../components/DeterminismPanel';
 import GraphsPanel from '../components/GraphsPanel';
 import MapContainer from '../components/map/MapContainer';
 import VersionComparisonPanel from '../components/VersionComparisonPanel';
+import JobErrorBanner from '../components/JobErrorBanner';
 import {normalizeSegments, useAcNodes, useAuditLogs, useBooths, useDeterminismCheck, useElections, useExceptions, useJobStatus, useSegments, useVersions} from '../hooks/useConsoleQueries';
 import {postSegmentationJob} from '../services/api';
 import {downloadJson} from '../services/exporter';
@@ -298,6 +299,9 @@ const SegmentationConsole = () => {
 
 					{activeTab === 'Overview' ? (
 						<Panel title='Overview'>
+							{jobStatusQuery.data?.status === 'failed' && jobStatusQuery.data?.result?.error && (
+								<JobErrorBanner error={jobStatusQuery.data.result.error} details={jobStatusQuery.data.result.details} forceExpanded={true} />
+							)}
 							<OverviewPanel segments={segments} stats={jobStatusQuery.data?.statistics ?? null} version={selectedVersion} runHash={runHash} performance={performanceMetrics} />
 							<VersionComparisonPanel baseVersion={compareEnabled ? compareVersionA : null} compareVersion={compareEnabled ? compareVersionB : null} baseSegments={compareSegmentsA} compareSegments={compareSegmentsB} />
 						</Panel>

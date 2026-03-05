@@ -1,4 +1,6 @@
+/// <reference types="@types/google.maps" />
 import type {Segment} from '../../types/api';
+
 import {getSegmentCentroidLatLng, getSegmentMembers} from '../../services/segmentUtils';
 import {buildConvexHull, getMemberLatLng, getSegmentPoints, toLatLngPathsArray} from './utils';
 
@@ -70,17 +72,17 @@ const getGlobalCentroid = (segment: Segment) => {
 			}
 		}
 
-		const globalCentroid = metadata.global_centroid as {lat?: unknown; lng?: unknown; coordinates?: unknown} | [unknown, unknown] | undefined;
+		const globalCentroid = metadata.global_centroid as {lat?: number; lng?: number; coordinates?: [number, number]} | [number, number] | undefined;
 		if (Array.isArray(globalCentroid) && globalCentroid.length >= 2) {
 			const lng = toNumber(globalCentroid[0]);
 			const lat = toNumber(globalCentroid[1]);
 			if (lat !== null && lng !== null) return {lat, lng};
 		}
-		if (globalCentroid && typeof globalCentroid === 'object') {
+		if (globalCentroid && typeof globalCentroid === 'object' && !Array.isArray(globalCentroid)) {
 			const lat = toNumber(globalCentroid.lat);
 			const lng = toNumber(globalCentroid.lng);
 			if (lat !== null && lng !== null) return {lat, lng};
-			const coordinates = (globalCentroid as {coordinates?: unknown}).coordinates;
+			const coordinates = globalCentroid.coordinates;
 			if (Array.isArray(coordinates) && coordinates.length >= 2) {
 				const coordLng = toNumber(coordinates[0]);
 				const coordLat = toNumber(coordinates[1]);

@@ -1,4 +1,6 @@
+/// <reference types="@types/google.maps" />
 import type {Segment, SegmentMember} from '../../types/api';
+import type * as GeoJSON from 'geojson';
 import type {WedgeGeometry} from './WedgeGenerator';
 import {getSegmentBoundary, getSegmentCentroidLatLng, getSegmentCode, getSegmentMembers, getSegmentVoterCount} from '../../services/segmentUtils';
 

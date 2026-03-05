@@ -1,5 +1,6 @@
 import {useQuery} from '@tanstack/react-query';
 import {getAcNodes, getAuditLogs, getBooths, getDeterminismCheck, getElections, getExceptions, getHierarchyBoothNodes, getJobStatus, getSegments, getSegmentVersions} from '../services/api';
+import type {Segment, SegmentsResponse} from '../types/api';
 
 export const useElections = () =>
 	useQuery({

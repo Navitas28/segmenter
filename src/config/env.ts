@@ -12,6 +12,7 @@ const envSchema = z.object({
   LOG_LEVEL: z.string().default("info"),
   ENABLE_SEGMENT_BACKEND_VISUALIZATION: z.string().default("false"),
   SEGMENTATION_STRATEGY: z.enum(["geo-hash", "grid-based"]).default("geo-hash"),
+  ENABLE_PRE_SEGMENTATION_CHECKS: z.string().default("false"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -30,4 +31,5 @@ export const env = {
   logLevel: parsed.data.LOG_LEVEL,
   enableSegmentBackendVisualization: parsed.data.ENABLE_SEGMENT_BACKEND_VISUALIZATION === "true" || parsed.data.ENABLE_SEGMENT_BACKEND_VISUALIZATION === "1",
   segmentationStrategy: parsed.data.SEGMENTATION_STRATEGY as "geo-hash" | "grid-based",
+  enablePreSegmentationChecks: parsed.data.ENABLE_PRE_SEGMENTATION_CHECKS === "true" || parsed.data.ENABLE_PRE_SEGMENTATION_CHECKS === "1",
 };
