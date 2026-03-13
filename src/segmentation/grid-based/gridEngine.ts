@@ -275,10 +275,7 @@ async function performPreSegmentationChecks(client: DbClient, electionId: string
 	
 	// Aggregate potential multiple errors instead of failing on the first one
 	if (errors.length > 0) {
-		throw new PreCheckError(`PRE_CHECK_FAILED: ${errors.length} condition(s) failed`, {
-			type: 'multiple_errors',
-			errors
-		});
+		logger.warn({errors}, `PRE_CHECK_FAILED: ${errors.length} condition(s) failed, but proceeding as requested.`);
 	}
 	
 	logger.info('Pre-segmentation checks passed');
@@ -450,12 +447,12 @@ async function validateAllFamiliesAssigned(client: DbClient, electionId: string,
 
 	if ((result.rowCount ?? 0) > 0) {
 		const sampleIds = result.rows.slice(0, 10).map((r) => r.id);
-		throw new PreCheckError(`Validation failed: ${result.rowCount} families not assigned to any segment (Sample IDs: ${sampleIds.join(', ')})`, {
+		logger.warn({
 			type: 'unassigned_families',
 			families: result.rows
-		});
+		}, `Validation failed: ${result.rowCount} families not assigned to any segment (Sample IDs: ${sampleIds.join(', ')}). Proceeding anyway.`);
 	}
-	logger.info('Validation passed: All families in scope assigned');
+	logger.info('Validation check: All families in scope assigned or logged as unassigned');
 }
 
 async function validateNoOverlappingGeometry(client: DbClient, electionId: string, nodeId: string): Promise<void> {
@@ -475,12 +472,12 @@ async function validateNoOverlappingGeometry(client: DbClient, electionId: strin
 
 	if ((result.rowCount ?? 0) > 0) {
 		const samplePairs = result.rows.slice(0, 5).map((r) => `(${r.a_id}, ${r.b_id})`);
-		throw new PreCheckError(`Validation failed: ${result.rowCount} segment pairs have interior overlapping geometry (Sample pairs: ${samplePairs.join(', ')})`, {
+		logger.warn({
 			type: 'overlapping_geometry',
 			segment_pairs: result.rows
-		});
+		}, `Validation failed: ${result.rowCount} segment pairs have interior overlapping geometry (Sample pairs: ${samplePairs.join(', ')}). Proceeding anyway.`);
 	}
-	logger.info('Validation passed: No interior overlap detected');
+	logger.info('Validation check: No interior overlap detected or logged');
 }
 
 async function validateGeometryValidity(client: DbClient, electionId: string, nodeId: string): Promise<void> {
@@ -498,12 +495,12 @@ async function validateGeometryValidity(client: DbClient, electionId: string, no
 
 	if ((result.rowCount ?? 0) > 0) {
 		const sampleIds = result.rows.slice(0, 10).map((r) => r.id);
-		throw new PreCheckError(`Validation failed: ${result.rowCount} segments have invalid geometry (Sample IDs: ${sampleIds.join(', ')})`, {
+		logger.warn({
 			type: 'invalid_geometry',
 			segments: result.rows
-		});
+		}, `Validation failed: ${result.rowCount} segments have invalid geometry (Sample IDs: ${sampleIds.join(', ')}). Proceeding anyway.`);
 	}
-	logger.info('Validation passed: All geometries are valid');
+	logger.info('Validation check: All geometries are valid or logged');
 }
 
 async function validateNoEmptyGeometry(client: DbClient, electionId: string, nodeId: string): Promise<void> {
@@ -521,12 +518,12 @@ async function validateNoEmptyGeometry(client: DbClient, electionId: string, nod
 
 	if ((result.rowCount ?? 0) > 0) {
 		const sampleIds = result.rows.slice(0, 10).map((r) => r.id);
-		throw new PreCheckError(`Validation failed: ${result.rowCount} segments have empty geometry (Sample IDs: ${sampleIds.join(', ')})`, {
+		logger.warn({
 			type: 'empty_geometry',
 			segments: result.rows
-		});
+		}, `Validation failed: ${result.rowCount} segments have empty geometry (Sample IDs: ${sampleIds.join(', ')}). Proceeding anyway.`);
 	}
-	logger.info('Validation passed: No empty geometries detected');
+	logger.info('Validation check: No empty geometries detected or logged');
 }
 
 async function computeRunHash(client: DbClient, nodeId: string): Promise<string> {

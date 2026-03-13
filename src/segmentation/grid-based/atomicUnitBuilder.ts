@@ -45,16 +45,13 @@ export async function buildAtomicUnits(client: DbClient, electionId: string, boo
 		WITH grouped_voters AS (
 			SELECT
 				v.id as voter_id,
-				COALESCE(
-					v.family_id::text,
-					md5(COALESCE(v.address, '') || '|' || COALESCE(v.floor_number::text, '')),
-					v.id::text
-				) as unit_id,
+				v.family_id::text as unit_id,
 				v.location
 			FROM voters v
 			WHERE v.election_id = $1
 				AND v.booth_id::text = any($2::text[])
 				AND v.location IS NOT NULL
+				AND v.family_id IS NOT NULL
 		),
 		atomic_units AS (
 			SELECT
