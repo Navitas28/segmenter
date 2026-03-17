@@ -10,6 +10,7 @@ interface LayerVisibility {
 	exceptionsOnly: boolean;
 	previousVersion: boolean;
 	showVoters: boolean;
+	boothMarker: boolean;
 }
 
 export type MapTypeId = 'roadmap' | 'satellite' | 'hybrid' | 'terrain';
@@ -77,6 +78,7 @@ export const useCustomerStore = create<CustomerStore>((set) => ({
 		exceptionsOnly: false,
 		previousVersion: false,
 		showVoters: false,
+		boothMarker: true,
 	},
 	mapType: 'roadmap',
 	map3DEnabled: false,

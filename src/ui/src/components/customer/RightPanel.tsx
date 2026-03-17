@@ -31,7 +31,7 @@ const RightPanel = ({segments, selectedSegment, nodeId}: RightPanelProps) => {
 
 	const backfillMutation = useMutation({
 		mutationFn: () => (nodeId ? backfillSegmentsBoundaries(nodeId) : Promise.reject(new Error('No node selected'))),
-		onSuccess: (data) => {
+		onSuccess: () => {
 			queryClient.invalidateQueries({queryKey: ['segments']});
 		},
 	});

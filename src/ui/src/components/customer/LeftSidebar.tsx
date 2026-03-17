@@ -41,6 +41,7 @@ const LeftSidebar = () => {
 					<h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Layers</h3>
 					<div className="space-y-1">
 						{[
+							{key: 'boothMarker', label: 'Booth location'},
 							{key: 'boundaries', label: 'Segment boundaries'},
 							{key: 'labels', label: 'Segment numbers on map'},
 							{key: 'centroids', label: 'Segment centroids'},

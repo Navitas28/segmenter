@@ -7,22 +7,20 @@ import CustomerMapView from '../components/customer/CustomerMapView';
 import RightPanel from '../components/customer/RightPanel';
 import BottomAuditPanel from '../components/customer/BottomAuditPanel';
 import {useCustomerStore} from '../store/useCustomerStore';
-import {useSegments, useJobStatus, useVersions} from '../hooks/useConsoleQueries';
+import {useSegments, useJobStatus} from '../hooks/useConsoleQueries';
 
 const CustomerConsole = () => {
 	const queryClient = useQueryClient();
-	const {electionId, scopeType, assemblyId, boothId, selectedVersion, selectedSegmentId, jobId, setSelectedVersion, setPdfJobId, filters} = useCustomerStore();
+	const {scopeType, assemblyId, boothId, selectedVersion, selectedSegmentId, jobId, setSelectedVersion, setPdfJobId, filters} = useCustomerStore();
 	const [auditPanelOpen, setAuditPanelOpen] = useState(false);
 	const lastCompletedJobRef = useRef<string | null>(null);
 
 	const nodeId = scopeType === 'ac' ? assemblyId : boothId;
 	const segmentsQuery = useSegments(nodeId, selectedVersion);
-	const versionsQuery = useVersions(nodeId ?? '');
 	const jobStatusQuery = useJobStatus(jobId ?? '');
 
 	const jobStatus = jobStatusQuery.data?.status;
 	const jobVersion = jobStatusQuery.data?.version;
-	const versions = versionsQuery.data?.versions ?? [];
 	const isJobRunning = jobId && (jobStatus === 'queued' || jobStatus === 'running');
 
 	// When job completes: refetch versions/segments and select the new version so results show

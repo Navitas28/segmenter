@@ -13,6 +13,8 @@ const TopBar = () => {
 	const [versionName, setVersionName] = useState('');
 	const [versionDescription, setVersionDescription] = useState('');
 	const [createdOnDisplay, setCreatedOnDisplay] = useState('');
+	const [showBoothMarker, setShowBoothMarker] = useState(true);
+	const [showExportMenu, setShowExportMenu] = useState(false);
 
 	const electionsQuery = useElections();
 	const acNodesQuery = useAcNodes(electionId);
@@ -42,10 +44,6 @@ const TopBar = () => {
 		});
 	};
 
-	const handleExportPdf = () => {
-		const id = jobId ?? pdfJobId;
-		if (id) exportSegmentsPdf(id);
-	};
 
 	const handleScopeChange = (newScope: 'ac' | 'booth') => {
 		setScopeType(newScope);
@@ -249,14 +247,55 @@ const TopBar = () => {
 						<span>Run</span>
 					</button>
 
-					<button
-						type="button"
-						onClick={handleExportPdf}
-						disabled={!(jobId ?? pdfJobId)}
-						className="h-9 px-3 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed rounded-lg transition-all flex items-center gap-2"
-					>
-						<Download size={16} />
-					</button>
+					{/* Export button with booth marker toggle */}
+					<div className="relative flex items-center">
+						<button
+							type="button"
+							id="export-pdf-btn"
+							onClick={() => {
+								const id = jobId ?? pdfJobId;
+								if (id) exportSegmentsPdf(id, showBoothMarker);
+							}}
+							disabled={!(jobId ?? pdfJobId)}
+							title="Export PDF"
+							className="h-9 px-3 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed rounded-l-lg transition-all flex items-center gap-2 border-r border-gray-200"
+						>
+							<Download size={16} />
+						</button>
+						<button
+							type="button"
+							id="export-options-btn"
+							onClick={() => setShowExportMenu((v) => !v)}
+							disabled={!(jobId ?? pdfJobId)}
+							title="Export options"
+							className="h-9 px-1.5 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed rounded-r-lg transition-all"
+						>
+							<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+								<path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+							</svg>
+						</button>
+						{showExportMenu && (
+							<div className="absolute right-0 top-10 z-50 w-52 bg-white border border-gray-200 rounded-xl shadow-xl p-3">
+								<p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Export Options</p>
+								<label className="flex items-center gap-2.5 cursor-pointer group">
+									<div
+										className={`relative w-9 h-5 rounded-full transition-colors ${showBoothMarker ? 'bg-blue-500' : 'bg-gray-300'}`}
+										onClick={() => setShowBoothMarker((v) => !v)}
+									>
+										<span
+											className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${showBoothMarker ? 'translate-x-4' : 'translate-x-0'}`}
+										/>
+									</div>
+									<span className="text-xs text-gray-700 group-hover:text-gray-900 select-none">
+										Mark Booth Location
+									</span>
+								</label>
+								<p className="text-[10px] text-gray-400 mt-1.5 ml-11 leading-tight">
+									Show booth pin on the map in PDF
+								</p>
+							</div>
+						)}
+					</div>
 				</div>
 			</div>
 

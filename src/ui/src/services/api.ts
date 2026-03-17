@@ -84,8 +84,8 @@ export const updateSegment = (segmentId: string, payload: {display_name?: string
 		body: JSON.stringify(payload),
 	});
 
-export const exportSegmentsPdf = (versionId: string) => {
-	const url = apiUrl(`/segments/export/pdf?versionId=${encodeURIComponent(versionId)}`);
+export const exportSegmentsPdf = (versionId: string, showBoothMarker = true) => {
+	const url = apiUrl(`/segments/export/pdf?versionId=${encodeURIComponent(versionId)}&showBoothMarker=${showBoothMarker}`);
 	window.open(url, '_blank');
 };
 
