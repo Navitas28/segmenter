@@ -79,7 +79,7 @@ const VoterLayer = ({map, segments, booths, scopeType, selectedSegmentId, hovere
 				const position = getMemberLatLng(member);
 				if (!position) return;
 				if (showHeatmap) {
-					heatmapData.push({location: position, weight: 1});
+					heatmapData.push({location: new google.maps.LatLng(position.lat, position.lng), weight: 1});
 					return;
 				}
 
@@ -124,7 +124,7 @@ const VoterLayer = ({map, segments, booths, scopeType, selectedSegmentId, hovere
 					map,
 					icon: {
 						path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
-						scale: 4,
+						scale: 10,
 						fillColor: '#facc15',
 						fillOpacity: 0.9,
 						strokeColor: '#0f172a',

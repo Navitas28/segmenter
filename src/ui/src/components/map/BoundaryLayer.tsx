@@ -107,7 +107,7 @@ const BoundaryLayer = ({
 				});
 
 				polygon.setMap(map);
-				polygon.addListener('click', (event) => {
+					polygon.addListener('click', (event: google.maps.MapMouseEvent) => {
 					onSelectSegment(segment.id);
 					const bounds = getWedgeBounds(geometry);
 					if (!bounds.isEmpty()) {
@@ -119,7 +119,7 @@ const BoundaryLayer = ({
 						infoWindow.open(map);
 					}
 				});
-				polygon.addListener('mouseover', (event) => {
+					polygon.addListener('mouseover', (event: google.maps.MapMouseEvent) => {
 					onHoverSegment(segment.id);
 					polygon.setOptions({
 						fillOpacity: 0.35 * baseOpacity,

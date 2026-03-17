@@ -1,14 +1,17 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
-import type {Booth, Segment} from '../../types/api';
+import type {Booth, BoothGridDebugSnapshot, Segment} from '../../types/api';
 import {loadGoogleMaps} from '../../services/maps';
 import {useConsoleStore} from '../../store/useConsoleStore';
 import {computeClusteringIndex, darkMapStyles, getSegmentBounds} from './utils';
 import type {WedgeGeometry} from './WedgeGenerator';
 import {buildWedgeGeometries, getWedgeBounds} from './WedgeGenerator';
+import {getSegmentCode} from '../../services/segmentUtils';
 import MapControls from './MapControls';
 import MapLegend from './MapLegend';
 import SegmentLayer from './SegmentLayer';
 import ComparisonLayer from './ComparisonLayer';
+import AlgorithmDebugLayer from './AlgorithmDebugLayer';
+import AlgorithmFlowPanel from './AlgorithmFlowPanel';
 
 type MapContainerProps = {
 	segments: Segment[];
@@ -21,6 +24,7 @@ type MapContainerProps = {
 	compareVersion: number | null;
 	versionOptions: number[];
 	performanceMetrics?: Record<string, unknown> | null;
+	debugSnapshot?: BoothGridDebugSnapshot | null;
 };
 
 const NEUTRAL_CENTER = {lat: 0, lng: 0};
@@ -30,7 +34,7 @@ const SMALL_BOUNDS_THRESHOLD = 0.0005;
 const MIN_FIT_ZOOM = 10;
 const MAX_FIT_ZOOM = 15;
 
-const MapContainer = ({segments, baseSegments, compareSegments, booths, scopeType, selectedVersion, baseVersion, compareVersion, versionOptions, performanceMetrics}: MapContainerProps) => {
+const MapContainer = ({segments, baseSegments, compareSegments, booths, scopeType, selectedVersion, baseVersion, compareVersion, versionOptions, performanceMetrics, debugSnapshot}: MapContainerProps) => {
 	const {
 		visualizationMode,
 		showBoundaries,
@@ -53,6 +57,7 @@ const MapContainer = ({segments, baseSegments, compareSegments, booths, scopeTyp
 	const mapRef = useRef<HTMLDivElement | null>(null);
 	const [map, setMap] = useState<google.maps.Map | null>(null);
 	const [hoveredSegmentId, setHoveredSegmentId] = useState<string | null>(null);
+	const [currentGrowthStep, setCurrentGrowthStep] = useState<number | null>(null);
 	const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
 	const ignoreMapClickRef = useRef(false);
 	const [debouncedZoom, setDebouncedZoom] = useState(5);
@@ -199,6 +204,7 @@ const MapContainer = ({segments, baseSegments, compareSegments, booths, scopeTyp
 
 	const comparisonEnabled = visualizationMode === 'comparison' && !!baseVersion && !!compareVersion;
 	const selectedSegment = useMemo(() => activeSegments.find((segment) => segment.id === selectedSegmentId) ?? null, [activeSegments, selectedSegmentId]);
+	const selectedSegmentCode = selectedSegment ? getSegmentCode(selectedSegment) : null;
 	const clusteringIndex = selectedSegment && showClusteringIndex ? computeClusteringIndex(selectedSegment) : null;
 	const debugOptions = useMemo(
 		() => ({
@@ -210,11 +216,23 @@ const MapContainer = ({segments, baseSegments, compareSegments, booths, scopeTyp
 		[showRawGeometry, showCentroidCoords, showBoundingBoxes, showClusteringIndex],
 	);
 
+	useEffect(() => {
+		setCurrentGrowthStep(null);
+	}, [debugSnapshot?.version]);
+
+	useEffect(() => {
+		const timelineLength = debugSnapshot?.timeline?.length ?? 0;
+		if (timelineLength === 0 || currentGrowthStep === null) return;
+		if (currentGrowthStep > timelineLength) {
+			setCurrentGrowthStep(timelineLength);
+		}
+	}, [debugSnapshot?.timeline, currentGrowthStep]);
+
 	return (
-		<div className='panel h-full flex flex-col gap-3'>
+		<div className='panel h-full flex flex-col gap-3 overflow-y-auto pr-1'>
 			<MapControls map={map} versionOptions={versionOptions} selectedVersion={selectedVersion} baseVersion={baseVersion} compareVersion={compareVersion} onFitToSegments={fitToSegments} />
 			{!apiKey ? <div className='text-sm text-amber-300'>Google Maps API key missing. Set `VITE_GOOGLE_MAPS_API_KEY` in `src/ui/.env`.</div> : null}
-			<div ref={mapRef} className='flex-1 rounded-md border border-slate-800 bg-slate-900' />
+			<div ref={mapRef} className='min-h-[420px] flex-[1_0_420px] rounded-md border border-slate-800 bg-slate-900' />
 			<MapLegend segments={activeSegments} wedgeGeometries={wedgeGeometries} mode={visualizationMode} baseVersion={baseVersion} compareVersion={compareVersion} />
 			{visualizationMode === 'debug' && performanceMetrics ? (
 				<div className='rounded-md border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300'>
@@ -239,6 +257,14 @@ const MapContainer = ({segments, baseSegments, compareSegments, booths, scopeTyp
 						<pre className='whitespace-pre-wrap'>{selectedSegment ? JSON.stringify(selectedSegment.boundary_geojson ?? selectedSegment.metadata?.boundary_geojson ?? {}, null, 2) : 'Select a segment to view geometry.'}</pre>
 					</div>
 				</div>
+			) : null}
+			{visualizationMode === 'debug' ? (
+				<AlgorithmFlowPanel
+					snapshot={debugSnapshot ?? null}
+					selectedSegment={selectedSegment}
+					currentStep={currentGrowthStep}
+					onStepChange={setCurrentGrowthStep}
+				/>
 			) : null}
 			{map ? (
 				<>
@@ -266,6 +292,16 @@ const MapContainer = ({segments, baseSegments, compareSegments, booths, scopeTyp
 						debouncedZoom={debouncedZoom}
 						debugOptions={debugOptions}
 					/>
+					{visualizationMode === 'debug' ? (
+						<AlgorithmDebugLayer
+							map={map}
+							snapshot={debugSnapshot ?? null}
+							selectedSegmentCode={selectedSegmentCode}
+							showVoters={showVoters}
+							currentStep={currentGrowthStep}
+							infoWindow={infoWindowRef.current}
+						/>
+					) : null}
 					{comparisonEnabled ? (
 						<ComparisonLayer
 							map={map}

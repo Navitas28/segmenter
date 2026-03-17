@@ -57,7 +57,7 @@ const getMemberLatLng = (member: SegmentMember) => {
 	return null;
 };
 
-const toLatLngArray = (geometry: GeoJSON.Geometry | GeoJSON.Feature | GeoJSON.FeatureCollection) => {
+const toLatLngArray = (geometry: GeoJSON.Geometry | GeoJSON.Feature | GeoJSON.FeatureCollection): google.maps.LatLngLiteral[] => {
 	if ('type' in geometry && geometry.type === 'Feature') {
 		return toLatLngArray(geometry.geometry);
 	}
@@ -172,7 +172,7 @@ const MapPanel = ({segments, comparisonSegments, booths, selectedSegmentId, scop
 						fillOpacity: showGeometryBounds ? 0.25 : 0.05,
 					});
 					polygon.setMap(map);
-					polygon.addListener('click', (event) => {
+						polygon.addListener('click', (event: google.maps.MapMouseEvent) => {
 						onSelectSegment?.(segment.id);
 						if (infoWindowRef.current && event.latLng) {
 							infoWindowRef.current.setContent(infoContent);
