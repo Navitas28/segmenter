@@ -10,6 +10,11 @@ type SegmentDetailProps = {
 
 const PAGE_SIZE = 25;
 
+const renderCellValue = (value: unknown) => {
+	if (value === null || value === undefined || value === '') return 'n/a';
+	return typeof value === 'string' || typeof value === 'number' ? value : String(value);
+};
+
 const SegmentDetail = ({segment}: SegmentDetailProps) => {
 	const [page, setPage] = useState(1);
 
@@ -55,7 +60,7 @@ const SegmentDetail = ({segment}: SegmentDetailProps) => {
 						</div>
 						<div>
 							<div className='text-slate-400'>Version</div>
-							<div>{segment.version ?? segment.metadata?.version ?? 'n/a'}</div>
+								<div>{renderCellValue(segment.version ?? segment.metadata?.version)}</div>
 						</div>
 						<div>
 							<div className='text-slate-400'>Voter Count</div>
@@ -107,10 +112,10 @@ const SegmentDetail = ({segment}: SegmentDetailProps) => {
 						<tbody>
 							{pagedMembers.map((member, index) => (
 								<tr key={`${member.voter_id ?? 'voter'}-${index}`} className='border-t border-slate-800'>
-									<td className='px-2 py-1'>{member.voter_id ?? member.metadata?.voter_id ?? 'n/a'}</td>
-									<td className='px-2 py-1'>{member.family_id ?? member.metadata?.family_id ?? 'n/a'}</td>
-									<td className='px-2 py-1'>{member.latitude ?? member.metadata?.latitude ?? 'n/a'}</td>
-									<td className='px-2 py-1'>{member.longitude ?? member.metadata?.longitude ?? 'n/a'}</td>
+										<td className='px-2 py-1'>{renderCellValue(member.voter_id ?? member.metadata?.voter_id)}</td>
+										<td className='px-2 py-1'>{renderCellValue(member.family_id ?? member.metadata?.family_id)}</td>
+										<td className='px-2 py-1'>{renderCellValue(member.latitude ?? member.metadata?.latitude)}</td>
+										<td className='px-2 py-1'>{renderCellValue(member.longitude ?? member.metadata?.longitude)}</td>
 								</tr>
 							))}
 						</tbody>

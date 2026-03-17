@@ -142,7 +142,7 @@ const SegmentDetailsPage = () => {
 																	</td>
 																	<td className="px-4 py-2.5 text-gray-700">{m.age != null ? m.age : '—'}</td>
 																	<td className="px-4 py-2.5">
-																		{m.is_verified ? (
+																		{m.latitude ? (
 																			<span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full text-xs font-medium">
 																				<CheckCircle size={12} /> Verified
 																			</span>

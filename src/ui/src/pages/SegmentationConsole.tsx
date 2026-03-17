@@ -91,16 +91,21 @@ const SegmentationConsole = () => {
 
 	const runHash = segmentsResponse && !Array.isArray(segmentsResponse) ? (segmentsResponse as SegmentsResponse).run_hash ?? null : null;
 	const performanceMetrics = segmentsResponse && !Array.isArray(segmentsResponse) ? (segmentsResponse as SegmentsResponse).performance ?? null : null;
+	const latestVersion = versionData[0] ?? null;
+	const debugSnapshot =
+		segmentsResponse && !Array.isArray(segmentsResponse) && (latestVersion === null || segmentsResponse.version === latestVersion)
+			? (segmentsResponse as SegmentsResponse).debug_snapshot ?? null
+			: null;
 
 	const versionSeries = useMemo(() => {
 		if (!versionsQuery.data) return [];
 		return versionsQuery.data.versions.map((version) => ({
 			version,
-			segments: versionsQuery.data?.versionCounts.get(version) ?? 0,
+			segments: version === selectedVersion ? segments.length : 0,
 		}));
-	}, [versionsQuery.data]);
+	}, [versionsQuery.data, selectedVersion, segments.length]);
 
-	const compareEnabled = visualizationMode === 'comparison' && compareVersionA && compareVersionB;
+	const compareEnabled = Boolean(visualizationMode === 'comparison' && compareVersionA && compareVersionB);
 	const selectedSegment = (compareEnabled ? compareSegmentsA : segments).find((segment) => segment.id === selectedSegmentId) ?? null;
 
 	const handleRunSegmentation = () => {
@@ -247,7 +252,7 @@ const SegmentationConsole = () => {
 					</Panel>
 
 					<Panel title='Run Controls'>
-						<button type='button' className='button button-primary' onClick={handleRunSegmentation} disabled={!electionId || !nodeId || runSegmentationMutation.isLoading}>
+						<button type='button' className='button button-primary' onClick={handleRunSegmentation} disabled={!electionId || !nodeId || runSegmentationMutation.isPending}>
 							<Play size={16} /> Run Segmentation
 						</button>
 						<button type='button' className='button' onClick={handleDeterminism} disabled={!electionId || !nodeId}>
@@ -277,7 +282,7 @@ const SegmentationConsole = () => {
 					</Panel>
 				</div>
 
-				<div className='flex flex-col gap-4 overflow-hidden'>
+				<div className='flex flex-col gap-4 overflow-auto pr-2'>
 					<MapContainer
 						segments={segments}
 						baseSegments={compareEnabled ? compareSegmentsA : segments}
@@ -289,6 +294,7 @@ const SegmentationConsole = () => {
 						compareVersion={compareEnabled ? compareVersionB : null}
 						versionOptions={versionData}
 						performanceMetrics={performanceMetrics}
+						debugSnapshot={debugSnapshot}
 					/>
 				</div>
 
