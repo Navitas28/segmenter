@@ -114,6 +114,7 @@ export async function processNextJob(): Promise<void> {
 						segment_count: result.segment_count,
 						voter_count: result.voter_count,
 						family_count: result.family_count,
+						...(result.debug_snapshot ? {debug_snapshot: result.debug_snapshot} : {}),
 					},
 				],
 			);
