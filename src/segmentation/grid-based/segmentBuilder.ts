@@ -12,6 +12,10 @@ export type Segment = {
 	id: string;
 	/** Segment code (e.g., SEG-001) */
 	code: string;
+	/** Region ID that produced this segment. */
+	source_region_id: string;
+	/** Seed cell used during BFS region growth. */
+	seed_cell_id: string;
 	/** Segment geometry (polygon) */
 	geometry: {
 		type: 'Polygon' | 'MultiPolygon';
@@ -26,6 +30,10 @@ export type Segment = {
 	total_voters: number;
 	/** Total family/unit count */
 	total_families: number;
+	/** Grid cells that make up this segment. */
+	cell_ids: string[];
+	/** Atomic units/families that make up this segment. */
+	unit_ids: string[];
 	/** Voter IDs in this segment */
 	voter_ids: string[];
 };
@@ -140,10 +148,14 @@ export async function buildSegments(client: DbClient, regions: Region[], assignm
 		const segment: Segment = {
 			id: region.id,
 			code: segmentCode,
+			source_region_id: region.id,
+			seed_cell_id: region.seed_cell_id,
 			geometry: JSON.parse(geomResult.rows[0].geometry_geojson),
 			centroid: JSON.parse(geomResult.rows[0].centroid_geojson),
 			total_voters: voterIds.length,
 			total_families: unitIds.size,
+			cell_ids: [...cellIds],
+			unit_ids: Array.from(unitIds).sort(),
 			voter_ids: voterIds.sort(),
 		};
 

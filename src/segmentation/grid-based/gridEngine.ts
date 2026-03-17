@@ -7,9 +7,10 @@ import {buildAtomicUnits} from './atomicUnitBuilder.js';
 import {computeParentBoundary} from './parentBoundary.js';
 import {buildAdaptiveGrid} from './gridBuilder.js';
 import {assignUnitsToCells} from './cellAssigner.js';
-import {growRegions} from './regionGrower.js';
+import {growRegionsWithOptions} from './regionGrower.js';
 import {buildSegments, Segment} from './segmentBuilder.js';
 import {validateSegments} from './segmentValidator.js';
+import {buildBoothGridDebugSnapshot} from './debugSnapshot.js';
 
 const COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
 
@@ -34,26 +35,37 @@ export async function runGridSegmentation(electionId: string, nodeId: string, ve
 		logger.info({electionId, nodeId, version}, 'Starting grid-based segmentation (BFS region growing)');
 
 		// Step 1: Resolve scope
-		const {boothIds} = await resolveScopeAndVoters(client, nodeId, electionId);
+		const {scope, boothIds, voters} = await resolveScopeAndVoters(client, nodeId, electionId);
 		if (boothIds.length === 0) {
 			throw new Error('No booths found for the selected assembly constituency or booth');
 		}
 		logger.info({nodeId, boothCount: boothIds.length}, 'Scope resolved; segmenting only voters in selected scope');
+		const boothGridDebugEnabled = env.enableBoothSegmentGridDebug && scope === 'BOOTH' && boothIds.length === 1;
+
+		if (env.enableBoothSegmentGridDebug && !boothGridDebugEnabled) {
+			logger.info(
+				{nodeId, scope, boothCount: boothIds.length},
+				'Booth grid debug snapshot requested, but skipped because the current scope is not a single booth',
+			);
+		}
 
 		if (env.enablePreSegmentationChecks) {
-			await performPreSegmentationChecks(client, electionId, boothIds, nodeId);
+			await performPreSegmentationChecks(client, electionId, boothIds, nodeId, {
+				requireFamilyCoordinates: env.enableGridAtomicUnitsFromFamilies,
+			});
 		}
 
 		const algorithmStartTime = Date.now();
 
 		// Step 2: Build atomic units
-		const units = await buildAtomicUnits(client, electionId, boothIds);
+		const atomicUnitSource = env.enableGridAtomicUnitsFromFamilies ? 'families' : 'voters';
+		const units = await buildAtomicUnits(client, electionId, boothIds, {source: atomicUnitSource});
 		if (units.length === 0) {
 			throw new Error('No atomic units found for segmentation');
 		}
 
 		const totalVoters = units.reduce((sum, u) => sum + u.voter_count, 0);
-		logger.info({unitCount: units.length, totalVoters}, 'Atomic units built');
+		logger.info({unitCount: units.length, totalVoters, atomicUnitSource}, 'Atomic units built');
 
 		// Step 3: Compute parent boundary
 		const boundary = await computeParentBoundary(client, units);
@@ -66,7 +78,7 @@ export async function runGridSegmentation(electionId: string, nodeId: string, ve
 		const assignments = await assignUnitsToCells(client, units);
 
 		// Step 6: Grow regions
-		const regions = await growRegions(client, assignments);
+		const regions = await growRegionsWithOptions(client, assignments, {captureDebug: boothGridDebugEnabled});
 		logger.info({regionCount: regions.length}, 'Regions grown');
 
 		// Step 7: Build segment geometries
@@ -102,7 +114,9 @@ export async function runGridSegmentation(electionId: string, nodeId: string, ve
 		const dbWriteDurationMs = Date.now() - dbWriteStartTime;
 
 		// Post-insert validation
-		await validateAllFamiliesAssigned(client, electionId, boothIds, nodeId);
+		await validateAllFamiliesAssigned(client, electionId, boothIds, nodeId, {
+			requireFamilyCoordinates: env.enableGridAtomicUnitsFromFamilies,
+		});
 		await validateNoOverlappingGeometry(client, electionId, nodeId);
 		await validateGeometryValidity(client, electionId, nodeId);
 		await validateNoEmptyGeometry(client, electionId, nodeId);
@@ -113,6 +127,22 @@ export async function runGridSegmentation(electionId: string, nodeId: string, ve
 
 		const oversizedCount = segments.filter((s) => s.total_voters > 135).length;
 		const undersizedCount = segments.filter((s) => s.total_voters < 90).length;
+		const debugSnapshot = boothGridDebugEnabled
+			? await buildBoothGridDebugSnapshot({
+					client,
+					electionId,
+					nodeId,
+					version,
+					boothIds,
+					boundary,
+					gridCells,
+					units,
+					assignments,
+					regions,
+					segments,
+					voters,
+			  })
+			: undefined;
 
 		const result: SegmentationResult = {
 			segment_count: segments.length,
@@ -122,6 +152,7 @@ export async function runGridSegmentation(electionId: string, nodeId: string, ve
 			db_write_ms: dbWriteDurationMs,
 			total_ms: totalDurationMs,
 			run_hash: runHash,
+			debug_snapshot: debugSnapshot,
 		};
 
 		if (oversizedCount > 0 || undersizedCount > 0) {
@@ -157,7 +188,13 @@ export class PreCheckError extends Error {
  * Perform pre-segmentation checks to ensure data integrity before running the spatial algorithm.
  * Validates that voters have locations and the families table is synced with the voters table.
  */
-async function performPreSegmentationChecks(client: DbClient, electionId: string, boothIds: string[], nodeId: string): Promise<void> {
+async function performPreSegmentationChecks(
+	client: DbClient,
+	electionId: string,
+	boothIds: string[],
+	nodeId: string,
+	options: {requireFamilyCoordinates?: boolean} = {},
+): Promise<void> {
 	logger.info({electionId, boothCount: boothIds.length, nodeId}, 'Running pre-segmentation data integrity checks');
 	const errors: any[] = [];
 
@@ -271,6 +308,33 @@ async function performPreSegmentationChecks(client: DbClient, electionId: string
 			type: 'unassigned_voters',
 			voters: unassignedVotersResult.rows
 		});
+	}
+
+	if (options.requireFamilyCoordinates) {
+		const familiesMissingCoordinatesResult = await client.query<{id: string}>(
+			`
+			SELECT f.id
+			FROM families f
+			WHERE f.election_id = $1
+				AND f.booth_id::text = any($2::text[])
+				AND f.member_count > 0
+				AND (f.latitude IS NULL OR f.longitude IS NULL)
+			LIMIT 100
+			`,
+			[electionId, boothIds]
+		);
+
+		if ((familiesMissingCoordinatesResult.rowCount ?? 0) > 0) {
+			const sampleIds = familiesMissingCoordinatesResult.rows.slice(0, 10).map((r) => r.id);
+			logger.warn(
+				{electionId, nodeId, sampleFamilyIds: sampleIds},
+				'Pre-check warning: Some families are missing family coordinates; they will be excluded from family-based atomic-unit building'
+			);
+			errors.push({
+				type: 'families_missing_coordinates',
+				families: familiesMissingCoordinatesResult.rows
+			});
+		}
 	}
 	
 	// Aggregate potential multiple errors instead of failing on the first one
@@ -429,7 +493,13 @@ async function insertSegmentMembers(
 	logger.info({memberCount: inserted}, 'Grid segment members (families) inserted');
 }
 
-async function validateAllFamiliesAssigned(client: DbClient, electionId: string, boothIds: string[], nodeId: string): Promise<void> {
+async function validateAllFamiliesAssigned(
+	client: DbClient,
+	electionId: string,
+	boothIds: string[],
+	nodeId: string,
+	options: {requireFamilyCoordinates?: boolean} = {},
+): Promise<void> {
 	const result = await client.query<{id: string}>(
 		`
 		SELECT f.id
@@ -439,10 +509,11 @@ async function validateAllFamiliesAssigned(client: DbClient, electionId: string,
 		WHERE f.election_id = $1
 			AND f.booth_id::text = any($2::text[])
 			AND f.member_count > 0
+			AND ($4::boolean = false OR (f.latitude IS NOT NULL AND f.longitude IS NOT NULL))
 			AND sm.id IS NULL
 		LIMIT 100
 		`,
-		[electionId, boothIds, nodeId],
+		[electionId, boothIds, nodeId, options.requireFamilyCoordinates === true],
 	);
 
 	if ((result.rowCount ?? 0) > 0) {
