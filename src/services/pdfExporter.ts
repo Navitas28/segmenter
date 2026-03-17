@@ -45,6 +45,14 @@ interface ExceptionData {
 	metadata: Record<string, unknown>;
 }
 
+interface BoothData {
+	id: string;
+	booth_name: string | null;
+	booth_number: string | number | null;
+	latitude: number | null;
+	longitude: number | null;
+}
+
 interface AuditData {
 	id: string;
 	segment_id: string;
@@ -85,7 +93,12 @@ interface NodeData {
 	code: string | null;
 }
 
-export const generateSegmentationPdfHtml = async (pool: Pool, versionId: string): Promise<string> => {
+export const generateSegmentationPdfHtml = async (
+	pool: Pool,
+	versionId: string,
+	options?: {showBoothMarker?: boolean},
+): Promise<string> => {
+	const showBoothMarker = options?.showBoothMarker !== false; // default true
 	// Fetch job data
 	const jobResult = await pool.query<JobData>(
 		`
@@ -110,6 +123,13 @@ export const generateSegmentationPdfHtml = async (pool: Pool, versionId: string)
 	// Fetch node data
 	const nodeResult = await pool.query<NodeData>('SELECT name, code FROM hierarchy_nodes WHERE id = $1', [job.node_id]);
 	const node = nodeResult.rows[0];
+
+	// Fetch booth data for this node (booth location marker)
+	const boothResult = await pool.query<BoothData>(
+		'SELECT id, booth_name, booth_number, latitude::float8, longitude::float8 FROM booths WHERE node_id = $1 AND latitude IS NOT NULL AND longitude IS NOT NULL',
+		[job.node_id],
+	);
+	const booths: BoothData[] = boothResult.rows;
 
 	// Fetch segments with geometry
 	const segmentsResult = await pool.query<SegmentData>(
@@ -266,7 +286,7 @@ export const generateSegmentationPdfHtml = async (pool: Pool, versionId: string)
 
 	// Try to generate a real map image using Google Maps + Puppeteer; fall back to centroid sketch if unavailable.
 	let mapVisualHtml: string;
-	const mapImageDataUrl = await renderSegmentsMapImage(segments).catch(() => null);
+	const mapImageDataUrl = await renderSegmentsMapImage(segments, booths, showBoothMarker).catch(() => null);
 
 	if (mapImageDataUrl) {
 		mapVisualHtml = `
@@ -284,12 +304,22 @@ export const generateSegmentationPdfHtml = async (pool: Pool, versionId: string)
 			mapVisualHtml =
 				'<p style="font-size: 10px; color: #64748b; margin-top: 12px;">Centroid coordinates are not available for this segmentation.</p>';
 		} else {
-			const lats = centroidSegments.map((s) => s.centroid_lat as number);
-			const lngs = centroidSegments.map((s) => s.centroid_lng as number);
-			const minLat = Math.min(...lats);
-			const maxLat = Math.max(...lats);
-			const minLng = Math.min(...lngs);
-			const maxLng = Math.max(...lngs);
+			const allLats = centroidSegments.map((s) => s.centroid_lat as number);
+			const allLngs = centroidSegments.map((s) => s.centroid_lng as number);
+
+			// Extend bounds to include booth locations if marker enabled
+			const boothsWithCoords = showBoothMarker ? booths.filter((b) => b.latitude != null && b.longitude != null) : [];
+			if (boothsWithCoords.length > 0) {
+				boothsWithCoords.forEach((b) => {
+					allLats.push(b.latitude as number);
+					allLngs.push(b.longitude as number);
+				});
+			}
+
+			const minLat = Math.min(...allLats);
+			const maxLat = Math.max(...allLats);
+			const minLng = Math.min(...allLngs);
+			const maxLng = Math.max(...allLngs);
 			const latSpan = Math.max(maxLat - minLat, 0.000001);
 			const lngSpan = Math.max(maxLng - minLng, 0.000001);
 			const labeledCount = Math.min(12, centroidSegments.length);
@@ -314,12 +344,27 @@ export const generateSegmentationPdfHtml = async (pool: Pool, versionId: string)
 				})
 				.join('');
 
+			// Booth markers in the fallback sketch (star-shaped, orange)
+			const boothDots = boothsWithCoords
+				.map((b) => {
+					const xPct = (((b.longitude as number) - minLng) / lngSpan) * 100;
+					const yPct = ((maxLat - (b.latitude as number)) / latSpan) * 100;
+					const label = b.booth_name ?? (b.booth_number != null ? `Booth ${b.booth_number}` : 'Booth');
+					return `
+						<div class="map-sketch-booth" style="left: ${xPct.toFixed(2)}%; top: ${yPct.toFixed(2)}%;">★</div>
+						<div class="map-sketch-booth-label" style="left: ${xPct.toFixed(2)}%; top: ${yPct.toFixed(2)}%;"><span>${label}</span></div>
+					`;
+				})
+				.join('');
+
 			mapVisualHtml = `
 				<div class="map-sketch">
 					${dots}
+					${boothDots}
 				</div>
 				<p class="map-info">
 					Approximate relative placement of segment centroids (not to scale). Labels are shown for up to ${labeledCount} segments.
+					${boothsWithCoords.length > 0 ? '★ = Booth location' : ''}
 				</p>
 			`;
 		}
@@ -361,8 +406,10 @@ export const generateSegmentationPdfHtml = async (pool: Pool, versionId: string)
 		.map-image-wrapper { margin-top: 16px; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; }
 		.map-image { width: 100%; display: block; }
 		.map-sketch { margin-top: 16px; width: 100%; height: 260px; border-radius: 8px; background: radial-gradient(circle at top, #e5f2ff 0, #f8fafc 45%, #e2e8f0 100%); position: relative; overflow: hidden; border: 1px solid #e2e8f0; }
-		.map-sketch-dot { position: absolute; width: 7px; height: 7px; border-radius: 999px; background: #2563eb; box-shadow: 0 0 0 1px #eff6ff, 0 0 0 4px rgba(37,99,235,0.45); }
+		.map-sketch-dot { position: absolute; width: 7px; height: 7px; border-radius: 999px; background: #2563eb; box-shadow: 0 0 0 1px #eff6ff, 0 0 0 4px rgba(37,99,235,0.45); transform: translate(-50%, -50%); }
 		.map-sketch-dot-label { position: absolute; transform: translate(-50%, -130%); background: rgba(15,23,42,0.9); color: #f9fafb; padding: 2px 4px; border-radius: 3px; font-size: 7px; white-space: nowrap; }
+		.map-sketch-booth { position: absolute; font-size: 18px; color: #ea580c; transform: translate(-50%, -50%); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)); z-index: 10; }
+		.map-sketch-booth-label { position: absolute; transform: translate(-50%, 30%); background: rgba(234,88,12,0.9); color: #fff; padding: 2px 5px; border-radius: 3px; font-size: 7px; white-space: nowrap; font-weight: 600; z-index: 11; }
 		.segment-card { padding: 16px; margin-bottom: 12px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; }
 		.segment-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; }
 		.segment-title { font-size: 16px; font-weight: 600; color: #0f172a; }
@@ -814,7 +861,11 @@ export const generateSegmentationPdfHtml = async (pool: Pool, versionId: string)
  * Render a static map image showing all segment geometries using Google Maps + Puppeteer.
  * Returns a data URL (data:image/png;base64,...) or null on failure.
  */
-async function renderSegmentsMapImage(segments: SegmentData[]): Promise<string | null> {
+async function renderSegmentsMapImage(
+	segments: SegmentData[],
+	booths: BoothData[],
+	showBoothMarker: boolean,
+): Promise<string | null> {
 	const apiKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
 	if (!apiKey) {
 		return null;
@@ -832,7 +883,18 @@ async function renderSegmentsMapImage(segments: SegmentData[]): Promise<string |
 		geometry: s.geometry_geojson ? JSON.parse(s.geometry_geojson) : null,
 	}));
 
+	const boothPayload = showBoothMarker
+		? booths
+				.filter((b) => b.latitude != null && b.longitude != null)
+				.map((b) => ({
+					lat: b.latitude as number,
+					lng: b.longitude as number,
+					label: b.booth_name ?? (b.booth_number != null ? `Booth ${b.booth_number}` : 'Booth'),
+				}))
+		: [];
+
 	const serialized = JSON.stringify(payload);
+	const boothSerialized = JSON.stringify(boothPayload);
 
 	const html = `
 <!DOCTYPE html>
@@ -848,6 +910,7 @@ async function renderSegmentsMapImage(segments: SegmentData[]): Promise<string |
 		<div id="map"></div>
 		<script>
 			const SEGMENTS = ${serialized};
+			const BOOTHS = ${boothSerialized};
 			const COLORS = [
 				'#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
 				'#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
@@ -897,6 +960,31 @@ async function renderSegmentsMapImage(segments: SegmentData[]): Promise<string |
 					paths.forEach(function(ring) {
 						ring.forEach(function(pt) { bounds.extend(pt); });
 					});
+				});
+
+				// Add booth location markers
+				BOOTHS.forEach(function(booth) {
+					const pos = {lat: booth.lat, lng: booth.lng};
+					new google.maps.Marker({
+						position: pos,
+						map: map,
+						title: booth.label,
+						icon: {
+							path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+							scale: 7,
+							fillColor: '#ea580c',
+							fillOpacity: 1,
+							strokeColor: '#ffffff',
+							strokeWeight: 2,
+						},
+						label: {
+							text: booth.label,
+							color: '#ffffff',
+							fontSize: '9px',
+							fontWeight: 'bold',
+						},
+					});
+					bounds.extend(pos);
 				});
 
 				if (!bounds.isEmpty()) {

@@ -142,6 +142,32 @@ apiRoutes.get('/segments', async (req, res) => {
 	const version = parsed.data.version ? Number(parsed.data.version) : null;
 
 	try {
+		const jobResult = await pool.query(
+			version != null
+				? `
+      select id, result, version, completed_at
+      from segmentation_jobs
+      where node_id = $1 and version = $2 and status = 'completed'
+      limit 1
+      `
+				: `
+      select id, result, version, completed_at
+      from segmentation_jobs
+      where node_id = $1 and status = 'completed'
+      order by version desc nulls last, completed_at desc nulls last
+      limit 1
+      `,
+			version != null ? [parsed.data.node_id, version] : [parsed.data.node_id],
+		);
+
+		const jobRow = jobResult.rows[0];
+		const effectiveVersion =
+			version != null && !Number.isNaN(version)
+				? version
+				: jobRow?.version != null
+					? Number(jobRow.version)
+					: null;
+
 		const segmentsResult = await pool.query(
 			`
       select
@@ -167,12 +193,16 @@ apiRoutes.get('/segments', async (req, res) => {
         ST_YMax(ST_Envelope(s.geometry)) as bbox_max_lat
       from segments s
       where s.node_id = $1
-        and ($2::int is null
-          or (s.metadata->>'version')::int = $2::int
-          or (s.metadata->>'version_number')::int = $2::int)
+        and (
+          $2::int is not null
+          and (
+            (s.metadata->>'version')::int = $2::int
+            or (s.metadata->>'version_number')::int = $2::int
+          )
+        )
       order by s.segment_name asc
       `,
-			[parsed.data.node_id, Number.isNaN(version) ? null : version],
+			[parsed.data.node_id, effectiveVersion],
 		);
 
 		const segmentIds = segmentsResult.rows.map((row) => row.id);
@@ -281,25 +311,6 @@ apiRoutes.get('/segments', async (req, res) => {
 			members: membersBySegment[String(row.id)] ?? [],
 		}));
 
-		const jobResult = await pool.query(
-			version != null
-				? `
-      select id, result, version, completed_at
-      from segmentation_jobs
-      where node_id = $1 and version = $2 and status = 'completed'
-      limit 1
-      `
-				: `
-      select id, result, version, completed_at
-      from segmentation_jobs
-      where node_id = $1 and status = 'completed'
-      order by completed_at desc nulls last
-      limit 1
-      `,
-			version != null ? [parsed.data.node_id, version] : [parsed.data.node_id],
-		);
-
-		const jobRow = jobResult.rows[0];
 		const runHash = jobRow?.result?.run_hash ?? null;
 		const performance = jobRow?.result
 			? {
@@ -311,10 +322,11 @@ apiRoutes.get('/segments', async (req, res) => {
 
 		return res.json({
 			segments,
-			version: jobRow?.version ?? null,
+			version: effectiveVersion,
 			job_id: jobRow?.id ?? null,
 			run_hash: runHash,
 			performance,
+			debug_snapshot: jobRow?.result?.debug_snapshot ?? null,
 		});
 	} catch (error) {
 		return res.status(500).json({error: error instanceof Error ? error.message : 'Unknown error'});
@@ -488,8 +500,11 @@ apiRoutes.get('/segments/export/pdf', async (req, res) => {
 		return res.status(400).json({error: 'versionId query parameter required'});
 	}
 
+	// showBoothMarker defaults to true unless explicitly set to "false"
+	const showBoothMarker = req.query.showBoothMarker !== 'false';
+
 	try {
-		const html = await generateSegmentationPdfHtml(pool, versionId);
+		const html = await generateSegmentationPdfHtml(pool, versionId, {showBoothMarker});
 		const pdfBuffer = await convertHtmlToPdf(html);
 
 		res.setHeader('Content-Type', 'application/pdf');
