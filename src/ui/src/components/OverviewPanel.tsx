@@ -1,5 +1,5 @@
 import type {Segment, SegmentStatistics} from '../types/api';
-import {buildIntegrityReport, getSegmentFamilyCount, getSegmentVoterCount} from '../services/segmentUtils';
+import {buildIntegrityReport, getSegmentFamilyCount, getSegmentFarVoterCount, getSegmentMissingBoothLocationCount, getSegmentVoterCount} from '../services/segmentUtils';
 
 type OverviewPanelProps = {
 	segments: Segment[];
@@ -22,6 +22,8 @@ const OverviewPanel = ({segments, stats, version, runHash, performance}: Overvie
 	};
 
 	const integrity = buildIntegrityReport(segments);
+	const farVoterSegments = segments.filter((segment) => getSegmentFarVoterCount(segment) > 0).length;
+	const missingBoothSegments = segments.filter((segment) => getSegmentMissingBoothLocationCount(segment) > 0).length;
 
 	return (
 		<div className='space-y-4 text-sm'>
@@ -60,6 +62,22 @@ const OverviewPanel = ({segments, stats, version, runHash, performance}: Overvie
 					</div>
 				</div>
 			</div>
+			<div className='grid grid-cols-2 gap-3'>
+				<div className='rounded-md border border-rose-900/60 bg-rose-950/30 p-3'>
+					<div className='panel-title'>Booth Distance</div>
+					<div className='mt-2 space-y-1 text-rose-100'>
+						<div>Voters &gt;= 2 km: {formatNumber(integrity.farVoters)}</div>
+						<div>Affected segments: {formatNumber(farVoterSegments)}</div>
+					</div>
+				</div>
+				<div className='rounded-md border border-amber-900/60 bg-amber-950/20 p-3'>
+					<div className='panel-title'>Booth Location</div>
+					<div className='mt-2 space-y-1 text-amber-100'>
+						<div>Missing booth location voters: {formatNumber(integrity.missingBoothLocations)}</div>
+						<div>Affected segments: {formatNumber(missingBoothSegments)}</div>
+					</div>
+				</div>
+			</div>
 			<div className='rounded-md border border-slate-800 bg-slate-900/60 p-3'>
 				<div className='panel-title'>Integrity Checks</div>
 				<div className='mt-2 space-y-1'>
@@ -67,6 +85,8 @@ const OverviewPanel = ({segments, stats, version, runHash, performance}: Overvie
 					<div className={integrity.tooSmall.length ? 'text-rose-300' : 'text-emerald-300'}>Segments &lt; 80 voters: {integrity.tooSmall.length || 0}</div>
 					<div className={integrity.duplicateVoters.length ? 'text-rose-300' : 'text-emerald-300'}>Duplicate voters: {integrity.duplicateVoters.length || 0}</div>
 					<div className={integrity.missingMembers ? 'text-amber-300' : 'text-emerald-300'}>Member list available: {integrity.missingMembers ? 'Missing' : 'Yes'}</div>
+					<div className={integrity.farVoters ? 'text-rose-300' : 'text-emerald-300'}>Voters &gt;= 2 km: {integrity.farVoters || 0}</div>
+					<div className={integrity.missingBoothLocations ? 'text-amber-300' : 'text-emerald-300'}>Booth location unavailable: {integrity.missingBoothLocations || 0}</div>
 				</div>
 			</div>
 		</div>

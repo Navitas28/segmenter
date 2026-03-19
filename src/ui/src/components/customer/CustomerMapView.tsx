@@ -342,15 +342,62 @@ const CustomerMapView = ({
           const pos = toLatLng(m.latitude, m.longitude);
           if (!pos || !googleMapRef.current) continue;
           try {
+            const boothLabel =
+              m.booth_name ??
+              (m.booth_number != null ? `Booth ${m.booth_number}` : "Booth");
+            const isFar = Boolean(m.is_far_from_booth);
+            const isBoothMissing = m.booth_location_status === "missing";
+            const isMemberMissing =
+              m.booth_location_status === "member_location_missing";
+            const fillColor = isFar
+              ? "#dc2626"
+              : isBoothMissing
+                ? "#d97706"
+                : isMemberMissing
+                  ? "#64748b"
+                  : segColor;
+            const radius = isFar ? 9 : isBoothMissing ? 7 : isMemberMissing ? 6 : 4;
             const circle = new google.maps.Circle({
               center: pos,
-              radius: 4,
-              fillColor: segColor,
+              radius,
+              fillColor,
               fillOpacity: 0.85,
               strokeColor: "#fff",
-              strokeWeight: 1,
+              strokeWeight: isFar ? 1.5 : 1,
               map: googleMapRef.current,
-              zIndex: 50,
+              zIndex: isFar ? 80 : 50,
+            });
+            circle.addListener("mouseover", () => {
+              if (!infoWindowRef.current) return;
+              const content = `
+							<div style="padding: 8px; font-family: system-ui;">
+								<div style="font-weight: 600; font-size: 13px; color: #111827; margin-bottom: 6px;">
+									${m.full_name ?? "Voter"}
+								</div>
+								<div style="font-size: 12px; color: #6b7280; margin-bottom: 2px;">
+									<span style="font-weight: 500;">Booth:</span> ${boothLabel}
+								</div>
+								<div style="font-size: 12px; color: ${
+                  isFar ? "#b91c1c" : isBoothMissing || isMemberMissing ? "#b45309" : "#166534"
+                };">
+									${
+                    isFar
+                      ? `<span style="font-weight: 600;">2 km away</span>${m.distance_from_booth_m != null ? ` · ${(m.distance_from_booth_m / 1000).toFixed(2)} km` : ""}`
+                      : isBoothMissing
+                        ? "Booth location not available"
+                        : isMemberMissing
+                          ? "Member location not available"
+                          : "Within 2 km"
+                  }
+								</div>
+							</div>
+						`;
+              infoWindowRef.current.setContent(content);
+              infoWindowRef.current.setPosition(pos);
+              infoWindowRef.current.open(googleMapRef.current);
+            });
+            circle.addListener("mouseout", () => {
+              infoWindowRef.current?.close();
             });
             voterOverlaysRef.current.push(circle);
           } catch {

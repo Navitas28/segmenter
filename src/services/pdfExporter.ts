@@ -1,5 +1,6 @@
 import type {Pool} from 'pg';
 import type {Browser} from 'puppeteer';
+import {normalizeBoothDistanceMetadata} from '../segmentation/boothDistance.js';
 
 interface SegmentData {
 	id: string;
@@ -18,6 +19,9 @@ interface SegmentData {
 	metadata: Record<string, unknown>;
 	boundary_geojson: string | null;
 	geometry_geojson: string | null;
+	far_voter_count?: number;
+	missing_booth_location_voter_count?: number;
+	member_location_missing_voter_count?: number;
 }
 
 interface VoterData {
@@ -30,8 +34,17 @@ interface VoterData {
 	gender: string | null;
 	relation_type: string | null;
 	relation_name: string | null;
+	booth_id: string | null;
+	booth_name: string | null;
+	booth_number: string | number | null;
 	latitude: number | null;
 	longitude: number | null;
+	distance_from_booth_m: number | null;
+	geodesic_distance_from_booth_m: number | null;
+	road_distance_from_booth_m: number | null;
+	distance_calculation_type: 'geodesic' | 'road';
+	is_far_from_booth: boolean;
+	booth_location_status: 'available' | 'missing' | 'member_location_missing';
 }
 
 interface ExceptionData {
@@ -99,6 +112,13 @@ export const generateSegmentationPdfHtml = async (
 	options?: {showBoothMarker?: boolean},
 ): Promise<string> => {
 	const showBoothMarker = options?.showBoothMarker !== false; // default true
+	const boothLocationUnavailableMessage = 'Booth location not available. Add booth location to get the details.';
+	const boothPinSvg = `
+		<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+			<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#E53935"/>
+			<circle cx="12" cy="9" r="3" fill="#f8f8f8"/>
+		</svg>
+	`.trim();
 	// Fetch job data
 	const jobResult = await pool.query<JobData>(
 		`
@@ -159,6 +179,9 @@ export const generateSegmentationPdfHtml = async (
 	);
 
 	const segments = segmentsResult.rows;
+	const boothDistanceBySegment = new Map(
+		segments.map((segment) => [segment.id, normalizeBoothDistanceMetadata(segment.metadata?.booth_distance)]),
+	);
 
 	// Fetch voters for all segments
 	const segmentIds = segments.map((s) => s.id);
@@ -175,10 +198,14 @@ export const generateSegmentationPdfHtml = async (
 			       v.gender,
 			       NULL::text as relation_type,
 			       NULL::text as relation_name,
+			       v.booth_id::text as booth_id,
+			       b.booth_name,
+			       b.booth_number,
 			       COALESCE(v.latitude, ST_Y(v.location)) as latitude,
 			       COALESCE(v.longitude, ST_X(v.location)) as longitude
 			FROM segment_members sm
 			JOIN voters v ON v.family_id = sm.family_id
+			LEFT JOIN booths b ON b.id = v.booth_id
 			WHERE sm.segment_id = ANY($1::uuid[])
 			ORDER BY sm.segment_id, v.id
 			`,
@@ -188,6 +215,10 @@ export const generateSegmentationPdfHtml = async (
 		votersBySegment = votersResult.rows.reduce<Record<string, VoterData[]>>((acc, row) => {
 			const segmentId = String(row.segment_id);
 			if (!acc[segmentId]) acc[segmentId] = [];
+			const boothDistance = boothDistanceBySegment.get(segmentId);
+			const farVoter = boothDistance?.far_voters.find((item) => item.voter_id === String(row.voter_id)) ?? null;
+			const isMissingBoothLocation = boothDistance?.missing_booth_location_voter_ids.includes(String(row.voter_id)) ?? false;
+			const isMemberLocationMissing = boothDistance?.member_location_missing_voter_ids.includes(String(row.voter_id)) ?? false;
 			acc[segmentId].push({
 				segment_id: segmentId,
 				voter_id: String(row.voter_id),
@@ -198,8 +229,21 @@ export const generateSegmentationPdfHtml = async (
 				gender: row.gender ?? null,
 				relation_type: row.relation_type ?? null,
 				relation_name: row.relation_name ?? null,
+				booth_id: row.booth_id != null ? String(row.booth_id) : null,
+				booth_name: row.booth_name ?? null,
+				booth_number: row.booth_number ?? null,
 				latitude: row.latitude != null ? Number(row.latitude) : null,
 				longitude: row.longitude != null ? Number(row.longitude) : null,
+				distance_from_booth_m: farVoter?.distance_meters ?? null,
+				geodesic_distance_from_booth_m: farVoter?.geodesic_distance_meters ?? null,
+				road_distance_from_booth_m: farVoter?.road_distance_meters ?? null,
+				distance_calculation_type: farVoter?.distance_calculation_type ?? boothDistance?.distance_calculation_type ?? 'geodesic',
+				is_far_from_booth: Boolean(farVoter),
+				booth_location_status: isMissingBoothLocation
+					? 'missing'
+					: isMemberLocationMissing
+						? 'member_location_missing'
+						: 'available',
 			});
 			return acc;
 		}, {});
@@ -247,6 +291,17 @@ export const generateSegmentationPdfHtml = async (
 	// Calculate statistics
 	const totalVoters = segments.reduce((sum, s) => sum + s.total_voters, 0);
 	const totalFamilies = segments.reduce((sum, s) => sum + s.total_families, 0);
+	const totalFarVoters = segments.reduce(
+		(sum, segment) => sum + normalizeBoothDistanceMetadata(segment.metadata?.booth_distance).far_voter_count,
+		0,
+	);
+	const totalMissingBoothLocationVoters = segments.reduce(
+		(sum, segment) => sum + normalizeBoothDistanceMetadata(segment.metadata?.booth_distance).missing_booth_location_voter_count,
+		0,
+	);
+	const segmentsWithFarVoters = segments.filter(
+		(segment) => normalizeBoothDistanceMetadata(segment.metadata?.booth_distance).far_voter_count > 0,
+	).length;
 	const avgVoters = segments.length > 0 ? Math.round(totalVoters / segments.length) : 0;
 	const voterCounts = segments.map((s) => s.total_voters);
 	const minVoters = voterCounts.length > 0 ? Math.min(...voterCounts) : 0;
@@ -286,7 +341,7 @@ export const generateSegmentationPdfHtml = async (
 
 	// Try to generate a real map image using Google Maps + Puppeteer; fall back to centroid sketch if unavailable.
 	let mapVisualHtml: string;
-	const mapImageDataUrl = await renderSegmentsMapImage(segments, booths, showBoothMarker).catch(() => null);
+	const mapImageDataUrl = await renderSegmentsMapImage(segments, booths, votersBySegment, showBoothMarker).catch(() => null);
 
 	if (mapImageDataUrl) {
 		mapVisualHtml = `
@@ -343,16 +398,28 @@ export const generateSegmentationPdfHtml = async (
 					`;
 				})
 				.join('');
+			const segmentColorIndex = new Map(segments.map((segment, index) => [segment.id, index]));
+			const voterDots = Object.entries(votersBySegment)
+				.flatMap(([segmentId, voters]) => {
+					const colorIndex = segmentColorIndex.get(segmentId) ?? 0;
+					const color = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'][colorIndex % 10];
+					return voters
+						.filter((voter) => voter.latitude != null && voter.longitude != null)
+						.map((voter) => {
+							const xPct = (((voter.longitude as number) - minLng) / lngSpan) * 100;
+							const yPct = ((maxLat - (voter.latitude as number)) / latSpan) * 100;
+							return `<div class="map-sketch-voter" style="left: ${xPct.toFixed(2)}%; top: ${yPct.toFixed(2)}%; background: ${color};"></div>`;
+						});
+				})
+				.join('');
 
-			// Booth markers in the fallback sketch (star-shaped, orange)
+			// Booth markers in the fallback sketch
 			const boothDots = boothsWithCoords
 				.map((b) => {
 					const xPct = (((b.longitude as number) - minLng) / lngSpan) * 100;
 					const yPct = ((maxLat - (b.latitude as number)) / latSpan) * 100;
-					const label = b.booth_name ?? (b.booth_number != null ? `Booth ${b.booth_number}` : 'Booth');
 					return `
-						<div class="map-sketch-booth" style="left: ${xPct.toFixed(2)}%; top: ${yPct.toFixed(2)}%;">★</div>
-						<div class="map-sketch-booth-label" style="left: ${xPct.toFixed(2)}%; top: ${yPct.toFixed(2)}%;"><span>${label}</span></div>
+						<div class="map-sketch-booth" style="left: ${xPct.toFixed(2)}%; top: ${yPct.toFixed(2)}%;">${boothPinSvg}</div>
 					`;
 				})
 				.join('');
@@ -360,15 +427,38 @@ export const generateSegmentationPdfHtml = async (
 			mapVisualHtml = `
 				<div class="map-sketch">
 					${dots}
+					${voterDots}
 					${boothDots}
 				</div>
 				<p class="map-info">
 					Approximate relative placement of segment centroids (not to scale). Labels are shown for up to ${labeledCount} segments.
-					${boothsWithCoords.length > 0 ? '★ = Booth location' : ''}
+					${boothsWithCoords.length > 0 ? 'Pin marker = Booth location' : ''}
 				</p>
 			`;
 		}
 	}
+
+	const boothLegendHtml =
+		showBoothMarker && booths.length > 0
+			? `
+				<div class="booth-legend">
+					<div class="booth-legend-title">Booth Locations</div>
+					<div class="booth-legend-list">
+						${booths
+							.map((booth) => {
+								const label = booth.booth_name ?? (booth.booth_number != null ? `Booth ${booth.booth_number}` : 'Booth');
+								return `
+									<div class="booth-legend-item">
+										<span class="booth-legend-icon">${boothPinSvg}</span>
+										<span>${label}</span>
+									</div>
+								`;
+							})
+							.join('')}
+					</div>
+				</div>
+			`
+			: '';
 
 	// Generate HTML
 	const html = `
@@ -407,9 +497,17 @@ export const generateSegmentationPdfHtml = async (
 		.map-image { width: 100%; display: block; }
 		.map-sketch { margin-top: 16px; width: 100%; height: 260px; border-radius: 8px; background: radial-gradient(circle at top, #e5f2ff 0, #f8fafc 45%, #e2e8f0 100%); position: relative; overflow: hidden; border: 1px solid #e2e8f0; }
 		.map-sketch-dot { position: absolute; width: 7px; height: 7px; border-radius: 999px; background: #2563eb; box-shadow: 0 0 0 1px #eff6ff, 0 0 0 4px rgba(37,99,235,0.45); transform: translate(-50%, -50%); }
+		.map-sketch-voter { position: absolute; width: 5px; height: 5px; border-radius: 999px; transform: translate(-50%, -50%); box-shadow: 0 0 0 1px rgba(255,255,255,0.9); z-index: 6; }
 		.map-sketch-dot-label { position: absolute; transform: translate(-50%, -130%); background: rgba(15,23,42,0.9); color: #f9fafb; padding: 2px 4px; border-radius: 3px; font-size: 7px; white-space: nowrap; }
-		.map-sketch-booth { position: absolute; font-size: 18px; color: #ea580c; transform: translate(-50%, -50%); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)); z-index: 10; }
+		.map-sketch-booth { position: absolute; transform: translate(-50%, -80%); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)); z-index: 10; }
+		.map-sketch-booth svg { width: 22px; height: 22px; display: block; }
 		.map-sketch-booth-label { position: absolute; transform: translate(-50%, 30%); background: rgba(234,88,12,0.9); color: #fff; padding: 2px 5px; border-radius: 3px; font-size: 7px; white-space: nowrap; font-weight: 600; z-index: 11; }
+		.booth-legend { margin-top: 18px; padding-top: 14px; border-top: 1px solid #e2e8f0; }
+		.booth-legend-title { font-size: 11px; font-weight: 700; color: #334155; margin-bottom: 8px; }
+		.booth-legend-list { display: flex; flex-direction: column; gap: 6px; }
+		.booth-legend-item { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #475569; }
+		.booth-legend-icon { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex: 0 0 20px; }
+		.booth-legend-icon svg { width: 18px; height: 18px; display: block; }
 		.segment-card { padding: 16px; margin-bottom: 12px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; }
 		.segment-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; }
 		.segment-title { font-size: 16px; font-weight: 600; color: #0f172a; }
@@ -422,6 +520,13 @@ export const generateSegmentationPdfHtml = async (
 		.voter-table th, .voter-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #e2e8f0; }
 		.voter-table th { background: #f8fafc; font-weight: 600; color: #475569; text-transform: uppercase; font-size: 8px; }
 		.voter-table td { color: #334155; }
+		.voter-row-far td { background: #fff1f2; }
+		.voter-row-missing td { background: #fffbeb; }
+		.status-badge { display: inline-block; padding: 2px 6px; border-radius: 999px; font-size: 8px; font-weight: 600; text-transform: uppercase; }
+		.status-badge.far { background: #fee2e2; color: #b91c1c; }
+		.status-badge.missing { background: #fef3c7; color: #b45309; }
+		.status-badge.ok { background: #dcfce7; color: #15803d; }
+		.booth-location-note { margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: #fff7ed; color: #9a3412; border-left: 4px solid #f97316; font-size: 10px; }
 		.integrity-checks { margin-top: 20px; }
 		.check-item { display: flex; align-items: center; padding: 10px; margin-bottom: 6px; background: #f8fafc; border-radius: 4px; }
 		.check-icon { width: 20px; height: 20px; margin-right: 10px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 12px; }
@@ -493,6 +598,14 @@ export const generateSegmentationPdfHtml = async (
 				<div class="dashboard-value">${totalFamilies.toLocaleString()}</div>
 				<div class="dashboard-label">Total Families</div>
 			</div>
+			<div class="dashboard-card ${totalFarVoters > 0 ? 'danger' : 'secondary'}">
+				<div class="dashboard-value">${totalFarVoters}</div>
+				<div class="dashboard-label">Voters >= 2 km</div>
+			</div>
+			<div class="dashboard-card ${totalMissingBoothLocationVoters > 0 ? 'warning' : 'secondary'}">
+				<div class="dashboard-value">${totalMissingBoothLocationVoters}</div>
+				<div class="dashboard-label">Missing Booth Location</div>
+			</div>
 			<div class="dashboard-card secondary">
 				<div class="dashboard-value">${avgVoters}</div>
 				<div class="dashboard-label">Avg Voters/Segment</div>
@@ -517,6 +630,10 @@ export const generateSegmentationPdfHtml = async (
 				<div class="dashboard-value">${undersizedSegments}</div>
 				<div class="dashboard-label">Undersized Segments</div>
 			</div>
+			<div class="dashboard-card ${segmentsWithFarVoters > 0 ? 'danger' : 'success'}">
+				<div class="dashboard-value">${segmentsWithFarVoters}</div>
+				<div class="dashboard-label">Segments With Far Voters</div>
+			</div>
 			<div class="dashboard-card info">
 				<div class="dashboard-value">${auditLogs.length}</div>
 				<div class="dashboard-label">Audit Records</div>
@@ -531,6 +648,8 @@ export const generateSegmentationPdfHtml = async (
 					<th>Display Name</th>
 					<th>Voters</th>
 					<th>Families</th>
+					<th>&gt;= 2 km</th>
+					<th>Missing Booth</th>
 					<th>Area (sq km)</th>
 					<th>Status</th>
 				</tr>
@@ -538,26 +657,36 @@ export const generateSegmentationPdfHtml = async (
 			<tbody>
 				${segments
 					.map(
-						(s) => `
+						(s) => {
+							const boothDistance = normalizeBoothDistanceMetadata(s.metadata?.booth_distance);
+							return `
 					<tr>
 						<td>${s.segment_name}</td>
 						<td>${s.display_name ?? s.segment_name}</td>
 						<td>${s.total_voters}</td>
 						<td>${s.total_families}</td>
+						<td>${boothDistance.far_voter_count}</td>
+						<td>${boothDistance.missing_booth_location_voter_count}</td>
 						<td>${s.area_sq_m != null ? (s.area_sq_m / 1_000_000).toFixed(2) : 'N/A'}</td>
 						<td>${
-							s.total_voters > 135
+							boothDistance.far_voter_count > 0
+								? '<span class="status-badge far">2 km away</span>'
+								: boothDistance.missing_booth_location_voter_count > 0
+									? '<span class="status-badge missing">Booth missing</span>'
+									: s.total_voters > 135
 								? '<span class="exception-badge critical">Oversized</span>'
 								: s.total_voters < 90
 									? '<span class="exception-badge warning">Undersized</span>'
-									: '<span style="color: #10b981;">✓ Normal</span>'
+									: '<span class="status-badge ok">Normal</span>'
 						}</td>
 					</tr>
-				`,
+				`;
+						},
 					)
 					.join('')}
 			</tbody>
 		</table>
+		${totalMissingBoothLocationVoters > 0 ? `<div class="booth-location-note">${boothLocationUnavailableMessage}</div>` : ''}
 	</div>
 
 	<!-- Map Visualization Page -->
@@ -605,6 +734,7 @@ export const generateSegmentationPdfHtml = async (
 				<strong>Note:</strong> For interactive map visualization, please use the Segmentation Console in the web application. 
 				GeoJSON boundaries are available for each segment in the detailed segment pages.
 			</div>
+			${boothLegendHtml}
 		</div>
 	</div>
 
@@ -613,6 +743,7 @@ export const generateSegmentationPdfHtml = async (
 		.map(
 			(segment) => {
 				const voters = votersBySegment[segment.id] ?? [];
+				const boothDistance = normalizeBoothDistanceMetadata(segment.metadata?.booth_distance);
 				const votersPerPage = 25;
 				const voterPages = [];
 				for (let i = 0; i < voters.length; i += votersPerPage) {
@@ -658,6 +789,14 @@ export const generateSegmentationPdfHtml = async (
 						}</div>
 						<div class="segment-stat-label">Centroid (lat, lng)</div>
 					</div>
+					<div class="segment-stat">
+						<div class="segment-stat-value">${boothDistance.far_voter_count}</div>
+						<div class="segment-stat-label">Voters &gt;= 2 km</div>
+					</div>
+					<div class="segment-stat">
+						<div class="segment-stat-value">${boothDistance.missing_booth_location_voter_count}</div>
+						<div class="segment-stat-label">Missing Booth Location</div>
+					</div>
 				</div>
 				${
 					segment.bbox_min_lat != null &&
@@ -678,6 +817,9 @@ export const generateSegmentationPdfHtml = async (
 						<tr>
 							<th>Name</th>
 							<th>EPIC</th>
+							<th>Booth</th>
+							<th>Status</th>
+							<th>Distance</th>
 							<th>Age</th>
 							<th>Gender</th>
 							<th>Relation</th>
@@ -688,9 +830,26 @@ export const generateSegmentationPdfHtml = async (
 						${voterPage
 							.map(
 								(v) => `
-							<tr>
+							<tr class="${
+								v.is_far_from_booth
+									? 'voter-row-far'
+									: v.booth_location_status === 'missing'
+										? 'voter-row-missing'
+										: ''
+							}">
 								<td>${v.full_name ?? 'N/A'}</td>
 								<td>${v.epic_number ?? 'N/A'}</td>
+								<td>${v.booth_name ?? (v.booth_number != null ? `Booth ${v.booth_number}` : 'N/A')}</td>
+								<td>${
+									v.is_far_from_booth
+										? '<span class="status-badge far">2 km away</span>'
+										: v.booth_location_status === 'missing'
+											? '<span class="status-badge missing">Booth location unavailable</span>'
+											: v.booth_location_status === 'member_location_missing'
+												? '<span class="status-badge missing">Member location unavailable</span>'
+												: '<span class="status-badge ok">Normal</span>'
+								}</td>
+								<td>${v.distance_from_booth_m != null ? `${(v.distance_from_booth_m / 1000).toFixed(2)} km` : 'N/A'}</td>
 								<td>${v.age ?? 'N/A'}</td>
 								<td>${v.gender ?? 'N/A'}</td>
 								<td>${v.relation_type ?? 'N/A'}${v.relation_name ? ` (${v.relation_name})` : ''}</td>
@@ -702,6 +861,7 @@ export const generateSegmentationPdfHtml = async (
 					</tbody>
 				</table>
 				` : '<p style="margin-top: 16px; color: #64748b; font-size: 10px;">No voters found for this segment.</p>'}
+				${boothDistance.missing_booth_location_voter_count > 0 ? `<div class="booth-location-note">${boothLocationUnavailableMessage}</div>` : ''}
 			</div>
 		</div>
 	`,
@@ -864,6 +1024,7 @@ export const generateSegmentationPdfHtml = async (
 async function renderSegmentsMapImage(
 	segments: SegmentData[],
 	booths: BoothData[],
+	votersBySegment: Record<string, VoterData[]>,
 	showBoothMarker: boolean,
 ): Promise<string | null> {
 	const apiKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
@@ -882,6 +1043,17 @@ async function renderSegmentsMapImage(
 		colorIndex: index,
 		geometry: s.geometry_geojson ? JSON.parse(s.geometry_geojson) : null,
 	}));
+	const segmentColorIndex = new Map(segments.map((segment, index) => [segment.id, index]));
+	const voterPayload = Object.entries(votersBySegment)
+		.flatMap(([segmentId, voters]) =>
+			voters
+				.filter((voter) => voter.latitude != null && voter.longitude != null)
+				.map((voter) => ({
+					lat: voter.latitude as number,
+					lng: voter.longitude as number,
+					colorIndex: segmentColorIndex.get(segmentId) ?? 0,
+				})),
+		);
 
 	const boothPayload = showBoothMarker
 		? booths
@@ -893,8 +1065,13 @@ async function renderSegmentsMapImage(
 				}))
 		: [];
 
+	const boothPinSvgUrl = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#E53935"/><circle cx="12" cy="9" r="3" fill="#f8f8f8"/></svg>`,
+	)}`;
+
 	const serialized = JSON.stringify(payload);
 	const boothSerialized = JSON.stringify(boothPayload);
+	const voterSerialized = JSON.stringify(voterPayload);
 
 	const html = `
 <!DOCTYPE html>
@@ -911,6 +1088,7 @@ async function renderSegmentsMapImage(
 		<script>
 			const SEGMENTS = ${serialized};
 			const BOOTHS = ${boothSerialized};
+			const VOTERS = ${voterSerialized};
 			const COLORS = [
 				'#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
 				'#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
@@ -962,6 +1140,24 @@ async function renderSegmentsMapImage(
 					});
 				});
 
+				VOTERS.forEach(function(voter) {
+					const pos = {lat: voter.lat, lng: voter.lng};
+					new google.maps.Marker({
+						position: pos,
+						icon: {
+							path: google.maps.SymbolPath.CIRCLE,
+							scale: 3.5,
+							fillColor: COLORS[voter.colorIndex % COLORS.length],
+							fillOpacity: 0.9,
+							strokeColor: '#ffffff',
+							strokeOpacity: 0.9,
+							strokeWeight: 1,
+						},
+						map: map,
+					});
+					bounds.extend(pos);
+				});
+
 				// Add booth location markers
 				BOOTHS.forEach(function(booth) {
 					const pos = {lat: booth.lat, lng: booth.lng};
@@ -970,18 +1166,8 @@ async function renderSegmentsMapImage(
 						map: map,
 						title: booth.label,
 						icon: {
-							path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
-							scale: 7,
-							fillColor: '#ea580c',
-							fillOpacity: 1,
-							strokeColor: '#ffffff',
-							strokeWeight: 2,
-						},
-						label: {
-							text: booth.label,
-							color: '#ffffff',
-							fontSize: '9px',
-							fontWeight: 'bold',
+							url: '${boothPinSvgUrl}',
+							scaledSize: new google.maps.Size(28, 28),
 						},
 					});
 					bounds.extend(pos);

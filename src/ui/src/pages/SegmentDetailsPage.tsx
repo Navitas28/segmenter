@@ -4,6 +4,11 @@ import {ChevronDown, ChevronRight, ArrowLeft, CheckCircle, XCircle} from 'lucide
 import {useCustomerStore} from '../store/useCustomerStore';
 import {useSegments} from '../hooks/useConsoleQueries';
 import type {Segment, SegmentMember} from '../types/api';
+import {getSegmentFarVoterCount, getSegmentMissingBoothLocationCount} from '../services/segmentUtils';
+
+const BOOTH_LOCATION_UNAVAILABLE_MESSAGE = 'Booth location not available. Add booth location to get the details.';
+
+type MemberFilter = 'all' | 'far' | 'missing';
 
 const SegmentDetailsPage = () => {
 	const navigate = useNavigate();
@@ -11,6 +16,7 @@ const SegmentDetailsPage = () => {
 	const nodeId = scopeType === 'ac' ? assemblyId : boothId;
 	const segmentsQuery = useSegments(nodeId ?? '', selectedVersion);
 	const [expandedId, setExpandedId] = useState<string | null>(null);
+	const [memberFilter, setMemberFilter] = useState<MemberFilter>('all');
 
 	const segments: Segment[] = Array.isArray(segmentsQuery.data)
 		? segmentsQuery.data
@@ -47,6 +53,13 @@ const SegmentDetailsPage = () => {
 					<div className="space-y-2">
 						{segments.map((segment) => {
 							const members = (segment.members ?? segment.voters ?? []) as SegmentMember[];
+							const farVoterCount = getSegmentFarVoterCount(segment);
+							const missingBoothLocationCount = getSegmentMissingBoothLocationCount(segment);
+							const filteredMembers = members.filter((member) => {
+								if (memberFilter === 'far') return Boolean(member.is_far_from_booth);
+								if (memberFilter === 'missing') return member.booth_location_status === 'missing';
+								return true;
+							});
 							const isExpanded = expandedId === segment.id;
 							return (
 								<div
@@ -106,9 +119,38 @@ const SegmentDetailsPage = () => {
 														</div>
 													</div>
 												)}
+												<div>
+													<span className="text-gray-500">2 km away</span>
+													<div className="font-medium text-rose-700">{farVoterCount}</div>
+												</div>
+												<div>
+													<span className="text-gray-500">Booth location unavailable</span>
+													<div className="font-medium text-amber-700">{missingBoothLocationCount}</div>
+												</div>
 											</div>
-											<div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-												Voters in this segment ({members.length})
+											<div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+												<div>
+													<div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+														Voters in this segment ({members.length})
+													</div>
+													{memberFilter === 'missing' && missingBoothLocationCount > 0 ? (
+														<div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+															{BOOTH_LOCATION_UNAVAILABLE_MESSAGE}
+														</div>
+													) : null}
+												</div>
+												<label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-gray-500">
+													<span>Filter voters</span>
+													<select
+														value={memberFilter}
+														onChange={(event) => setMemberFilter(event.target.value as MemberFilter)}
+														className="h-10 rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium normal-case text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+													>
+														<option value="all">All voters</option>
+														<option value="far">2 km away</option>
+														<option value="missing">Booth location unavailable</option>
+													</select>
+												</label>
 											</div>
 											{members.length === 0 ? (
 												<div className="text-sm text-gray-500 py-2">No voter list loaded.</div>
@@ -122,13 +164,25 @@ const SegmentDetailsPage = () => {
 																<th className="text-left px-4 py-3 font-semibold text-gray-700">Age</th>
 																<th className="text-left px-4 py-3 font-semibold text-gray-700">Verified</th>
 																<th className="text-left px-4 py-3 font-semibold text-gray-700">Relation</th>
+																<th className="text-left px-4 py-3 font-semibold text-gray-700">Booth</th>
+																<th className="text-left px-4 py-3 font-semibold text-gray-700">Status</th>
+																<th className="text-left px-4 py-3 font-semibold text-gray-700">Distance</th>
 																<th className="text-left px-4 py-3 font-semibold text-gray-700">Lat</th>
 																<th className="text-left px-4 py-3 font-semibold text-gray-700">Lng</th>
 															</tr>
 														</thead>
 														<tbody>
-															{members.map((m, i) => (
-																<tr key={m.voter_id ?? i} className="border-t border-gray-100 hover:bg-blue-50/50 transition-colors">
+															{filteredMembers.map((m, i) => (
+																<tr
+																	key={m.voter_id ?? i}
+																	className={`border-t border-gray-100 transition-colors ${
+																		m.is_far_from_booth
+																			? 'bg-rose-50/70 hover:bg-rose-100'
+																			: m.booth_location_status === 'missing'
+																				? 'bg-amber-50/70 hover:bg-amber-100'
+																				: 'hover:bg-blue-50/50'
+																	}`}
+																>
 																	<td className="px-4 py-2.5">
 																		<div className="font-medium text-gray-900">{m.full_name ?? '—'}</div>
 																		{m.serial_number && (
@@ -162,6 +216,31 @@ const SegmentDetailsPage = () => {
 																			'—'
 																		)}
 																	</td>
+																	<td className="px-4 py-2.5 text-gray-600">
+																		{m.booth_name ?? (m.booth_number != null ? `Booth ${m.booth_number}` : '—')}
+																	</td>
+																	<td className="px-4 py-2.5">
+																		{m.is_far_from_booth ? (
+																			<span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
+																				2 km away
+																			</span>
+																		) : m.booth_location_status === 'missing' ? (
+																			<span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+																				Booth location unavailable
+																			</span>
+																		) : m.booth_location_status === 'member_location_missing' ? (
+																			<span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
+																				Member location unavailable
+																			</span>
+																		) : (
+																			<span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+																				Normal
+																			</span>
+																		)}
+																	</td>
+																	<td className="px-4 py-2.5 font-mono text-gray-600 text-xs">
+																		{m.distance_from_booth_m != null ? `${(Number(m.distance_from_booth_m) / 1000).toFixed(2)} km` : '—'}
+																	</td>
 																	<td className="px-4 py-2.5 font-mono text-gray-600 text-xs">
 																		{m.latitude != null ? Number(m.latitude).toFixed(5) : '—'}
 																	</td>
@@ -174,6 +253,11 @@ const SegmentDetailsPage = () => {
 													</table>
 												</div>
 											)}
+											{members.length > 0 && filteredMembers.length === 0 ? (
+												<div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-sm text-gray-500">
+													No voters match the selected filter in this segment.
+												</div>
+											) : null}
 										</div>
 									)}
 								</div>

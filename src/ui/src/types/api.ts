@@ -29,6 +29,9 @@ export type Booth = {
 export type SegmentMember = {
 	voter_id?: string;
 	family_id?: string | null;
+	booth_id?: string | null;
+	booth_name?: string | null;
+	booth_number?: string | number | null;
 	full_name?: string | null;
 	relation_type?: string | null;
 	relation_name?: string | null;
@@ -39,6 +42,12 @@ export type SegmentMember = {
 	gender?: string | null;
 	latitude?: number | null;
 	longitude?: number | null;
+	distance_from_booth_m?: number | null;
+	geodesic_distance_from_booth_m?: number | null;
+	road_distance_from_booth_m?: number | null;
+	distance_calculation_type?: 'geodesic' | 'road';
+	is_far_from_booth?: boolean;
+	booth_location_status?: 'available' | 'missing' | 'member_location_missing';
 	metadata?: Record<string, unknown>;
 };
 
@@ -68,6 +77,11 @@ export type Segment = {
 	bbox_min_lng?: number | null;
 	bbox_max_lat?: number | null;
 	bbox_max_lng?: number | null;
+	far_voter_count?: number | null;
+	missing_booth_location_voter_count?: number | null;
+	member_location_missing_voter_count?: number | null;
+	distance_calculation_type?: 'geodesic' | 'road' | null;
+	has_booth_distance_issues?: boolean | null;
 	metadata?: Record<string, unknown>;
 	members?: SegmentMember[];
 	voters?: SegmentMember[];

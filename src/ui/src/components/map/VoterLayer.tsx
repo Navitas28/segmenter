@@ -84,19 +84,34 @@ const VoterLayer = ({map, segments, booths, scopeType, selectedSegmentId, hovere
 				}
 
 				const familyId = member.family_id ?? (member.metadata?.family_id as string | undefined);
-				const color = highlightFamilies && familyId ? familyColors.get(familyId) ?? baseColor : baseColor;
+				const defaultColor = highlightFamilies && familyId ? familyColors.get(familyId) ?? baseColor : baseColor;
+				const isFar = Boolean(member.is_far_from_booth);
+				const isBoothMissing = member.booth_location_status === 'missing';
+				const isMemberMissing = member.booth_location_status === 'member_location_missing';
+				const color = isFar ? '#dc2626' : isBoothMissing ? '#d97706' : isMemberMissing ? '#64748b' : defaultColor;
+				const scale = isFar ? 6 : isBoothMissing ? 5 : isMemberMissing ? 4.5 : isHovered || isSelected ? 5 : 4;
+				const boothLabel = member.booth_name ?? (member.booth_number != null ? `Booth ${member.booth_number}` : 'Booth');
+				const distanceLabel =
+					member.distance_from_booth_m != null ? `${(Number(member.distance_from_booth_m) / 1000).toFixed(2)} km` : null;
 
 				const marker = new google.maps.Marker({
 					position,
 					map: map ?? undefined,
 					opacity: fade,
+					title: isFar
+						? `${member.full_name ?? 'Voter'} • ${boothLabel} • ${distanceLabel ?? '2 km away'}`
+						: isBoothMissing
+							? `${member.full_name ?? 'Voter'} • ${boothLabel} • Booth location unavailable`
+							: isMemberMissing
+								? `${member.full_name ?? 'Voter'} • ${boothLabel} • Member location unavailable`
+								: `${member.full_name ?? 'Voter'} • ${boothLabel}`,
 					icon: {
 						path: google.maps.SymbolPath.CIRCLE,
-						scale: isHovered || isSelected ? 5 : 4,
+						scale,
 						fillColor: color,
 						fillOpacity: 0.8,
 						strokeColor: '#f8fafc',
-						strokeWeight: 0.5,
+						strokeWeight: isFar ? 1 : 0.5,
 					},
 					clickable: false,
 				});

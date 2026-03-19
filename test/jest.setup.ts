@@ -21,13 +21,14 @@ const TABLES_TO_TRUNCATE = [
 	'public.audit_movements',
 	'public.segmentation_jobs',
 	'public.voters',
+	'public.families',
 	'public.booths',
 	'public.hierarchy_nodes',
 	'public.hierarchy_levels',
 	'public.elections',
 ];
 
-const REQUIRED_TABLES = ['audit_movements', 'audit_batches', 'booths', 'exceptions', 'hierarchy_levels', 'hierarchy_nodes', 'segment_members', 'segmentation_jobs', 'segments', 'voters', 'elections'];
+const REQUIRED_TABLES = ['audit_movements', 'audit_batches', 'booths', 'exceptions', 'families', 'hierarchy_levels', 'hierarchy_nodes', 'segment_members', 'segmentation_jobs', 'segments', 'voters', 'elections'];
 
 async function startDb(): Promise<void> {
 	const container = await new GenericContainer('postgis/postgis:16-3.4')

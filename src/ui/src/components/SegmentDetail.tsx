@@ -1,6 +1,15 @@
 import {useEffect, useMemo, useState} from 'react';
 import type {Segment, SegmentMember} from '../types/api';
-import {getSegmentCentroidLatLng, getSegmentCode, getSegmentFamilyCount, getSegmentHash, getSegmentMembers, getSegmentVoterCount} from '../services/segmentUtils';
+import {
+	getSegmentCentroidLatLng,
+	getSegmentCode,
+	getSegmentFamilyCount,
+	getSegmentFarVoterCount,
+	getSegmentHash,
+	getSegmentMembers,
+	getSegmentMissingBoothLocationCount,
+	getSegmentVoterCount,
+} from '../services/segmentUtils';
 import JsonViewer from './JsonViewer';
 import SegmentPreviewMap from './map/SegmentPreviewMap';
 
@@ -40,6 +49,8 @@ const SegmentDetail = ({segment}: SegmentDetailProps) => {
 	const centroid = segment ? getSegmentCentroidLatLng(segment) : null;
 	const voterCount = segment ? getSegmentVoterCount(segment) : 0;
 	const familyCount = segment ? getSegmentFamilyCount(segment) : 0;
+	const farVoterCount = segment ? getSegmentFarVoterCount(segment) : 0;
+	const missingBoothLocationCount = segment ? getSegmentMissingBoothLocationCount(segment) : 0;
 	const sizeStatus = voterCount > 150 ? 'oversized' : voterCount < 80 ? 'undersized' : 'healthy';
 	const sizeStatusLabel = sizeStatus === 'healthy' ? 'Healthy' : sizeStatus === 'undersized' ? 'Below 80' : 'Above 150';
 	const sizeStatusClass = sizeStatus === 'healthy' ? 'text-emerald-300' : sizeStatus === 'undersized' ? 'text-amber-300' : 'text-rose-300';
@@ -78,6 +89,14 @@ const SegmentDetail = ({segment}: SegmentDetailProps) => {
 							<div className='text-slate-400'>Size Status</div>
 							<div className={`font-semibold ${sizeStatusClass}`}>{sizeStatusLabel}</div>
 						</div>
+						<div>
+							<div className='text-slate-400'>Voters &gt;= 2 km</div>
+							<div className='font-semibold text-rose-300'>{farVoterCount}</div>
+						</div>
+						<div>
+							<div className='text-slate-400'>Booth Location Missing</div>
+							<div className='font-semibold text-amber-300'>{missingBoothLocationCount}</div>
+						</div>
 					</div>
 				</div>
 				<SegmentPreviewMap segment={segment} />
@@ -105,15 +124,40 @@ const SegmentDetail = ({segment}: SegmentDetailProps) => {
 							<tr>
 								<th className='px-2 py-2 text-left'>Voter ID</th>
 								<th className='px-2 py-2 text-left'>Family ID</th>
+								<th className='px-2 py-2 text-left'>Booth</th>
+								<th className='px-2 py-2 text-left'>Status</th>
+								<th className='px-2 py-2 text-left'>Distance</th>
 								<th className='px-2 py-2 text-left'>Lat</th>
 								<th className='px-2 py-2 text-left'>Lng</th>
 							</tr>
 						</thead>
 						<tbody>
 							{pagedMembers.map((member, index) => (
-								<tr key={`${member.voter_id ?? 'voter'}-${index}`} className='border-t border-slate-800'>
+								<tr
+									key={`${member.voter_id ?? 'voter'}-${index}`}
+									className={`border-t border-slate-800 ${
+										member.is_far_from_booth
+											? 'bg-rose-950/20'
+											: member.booth_location_status === 'missing'
+												? 'bg-amber-950/20'
+												: ''
+									}`}
+								>
 										<td className='px-2 py-1'>{renderCellValue(member.voter_id ?? member.metadata?.voter_id)}</td>
 										<td className='px-2 py-1'>{renderCellValue(member.family_id ?? member.metadata?.family_id)}</td>
+										<td className='px-2 py-1'>{renderCellValue(member.booth_name ?? member.booth_number ?? member.booth_id)}</td>
+										<td className='px-2 py-1'>
+											{member.is_far_from_booth
+												? '2 km away'
+												: member.booth_location_status === 'missing'
+													? 'Booth location unavailable'
+													: member.booth_location_status === 'member_location_missing'
+														? 'Member location unavailable'
+														: 'Normal'}
+										</td>
+										<td className='px-2 py-1'>
+											{member.distance_from_booth_m != null ? `${(Number(member.distance_from_booth_m) / 1000).toFixed(2)} km` : 'n/a'}
+										</td>
 										<td className='px-2 py-1'>{renderCellValue(member.latitude ?? member.metadata?.latitude)}</td>
 										<td className='px-2 py-1'>{renderCellValue(member.longitude ?? member.metadata?.longitude)}</td>
 								</tr>

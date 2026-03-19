@@ -15,6 +15,8 @@ const envSchema = z.object({
   SEGMENTATION_STRATEGY: z.enum(["geo-hash", "grid-based"]).default("geo-hash"),
   ENABLE_PRE_SEGMENTATION_CHECKS: z.string().default("false"),
   ENABLE_GRID_ATOMIC_UNITS_FROM_FAMILIES: z.string().default("false"),
+  BOOTH_DISTANCE_CALCULATION_TYPE: z.enum(["geodesic", "road"]).default("geodesic"),
+  GOOGLE_MAPS_API_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -38,4 +40,6 @@ export const env = {
   enableGridAtomicUnitsFromFamilies:
     parsed.data.ENABLE_GRID_ATOMIC_UNITS_FROM_FAMILIES === "true" ||
     parsed.data.ENABLE_GRID_ATOMIC_UNITS_FROM_FAMILIES === "1",
+  boothDistanceCalculationType: parsed.data.BOOTH_DISTANCE_CALCULATION_TYPE,
+  googleMapsApiKey: parsed.data.GOOGLE_MAPS_API_KEY?.trim() || "",
 };

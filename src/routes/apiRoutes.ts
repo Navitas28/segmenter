@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {pool} from '../db/transaction.js';
 import {familyRoutes} from '../family/familyController.js';
 import {generateSegmentationPdfHtml, convertHtmlToPdf} from '../services/pdfExporter.js';
+import {normalizeBoothDistanceMetadata} from '../segmentation/boothDistance.js';
 
 export const apiRoutes = express.Router();
 
@@ -26,6 +27,12 @@ const updateSegmentSchema = z.object({
 	display_name: z.string().optional(),
 	description: z.string().optional(),
 });
+
+const toFiniteNumber = (value: unknown) => {
+	if (value === null || value === undefined) return null;
+	const numeric = Number(value);
+	return Number.isFinite(numeric) ? numeric : null;
+};
 
 apiRoutes.get('/elections', async (_req, res) => {
 	try {
@@ -210,15 +217,25 @@ apiRoutes.get('/segments', async (req, res) => {
 		// One row per voter: always fetch segment members (join on family_id), then enrich from voters table
 		let membersBySegment: Record<string, unknown[]> = {};
 		if (segmentIds.length > 0) {
+			const boothDistanceBySegment = new Map(
+				segmentsResult.rows.map((row) => [
+					String(row.id),
+					normalizeBoothDistanceMetadata((row.metadata ?? {})?.booth_distance),
+				]),
+			);
 			const membersResult = await pool.query(
 				`
         select sm.segment_id,
                v.id as voter_id,
                sm.family_id,
+               v.booth_id,
+               b.booth_name,
+               b.booth_number,
                coalesce(v.latitude, ST_Y(v.location)) as latitude,
                coalesce(v.longitude, ST_X(v.location)) as longitude
         from segment_members sm
         join voters v on v.family_id = sm.family_id
+        left join booths b on b.id = v.booth_id
         where sm.segment_id = any($1::uuid[])
         order by sm.segment_id, v.id
         `,
@@ -276,40 +293,66 @@ apiRoutes.get('/segments', async (req, res) => {
 				if (!acc[segmentId]) acc[segmentId] = [];
 				const voterId = String(row.voter_id);
 				const details = voterDetailsMap[voterId] ?? {};
+				const boothDistance = boothDistanceBySegment.get(segmentId);
+				const farVoter = boothDistance?.far_voters.find((item) => item.voter_id === voterId) ?? null;
+				const isMissingBoothLocation = boothDistance?.missing_booth_location_voter_ids.includes(voterId) ?? false;
+				const isMemberLocationMissing = boothDistance?.member_location_missing_voter_ids.includes(voterId) ?? false;
+				const boothLocationStatus = isMissingBoothLocation
+					? 'missing'
+					: isMemberLocationMissing
+						? 'member_location_missing'
+						: 'available';
 				acc[segmentId].push({
 					voter_id: row.voter_id,
 					family_id: row.family_id,
-					latitude: row.latitude,
-					longitude: row.longitude,
+					booth_id: row.booth_id,
+					booth_name: row.booth_name,
+					booth_number: row.booth_number,
+					latitude: toFiniteNumber(row.latitude),
+					longitude: toFiniteNumber(row.longitude),
+					distance_from_booth_m: farVoter?.distance_meters ?? null,
+					geodesic_distance_from_booth_m: farVoter?.geodesic_distance_meters ?? null,
+					road_distance_from_booth_m: farVoter?.road_distance_meters ?? null,
+					distance_calculation_type: farVoter?.distance_calculation_type ?? boothDistance?.distance_calculation_type ?? 'geodesic',
+					is_far_from_booth: Boolean(farVoter),
+					booth_location_status: boothLocationStatus,
 					...details,
 				});
 				return acc;
 			}, {});
 		}
 
-		const segments = segmentsResult.rows.map((row) => ({
-			id: row.id,
-			segment_name: row.segment_name,
-			display_name: row.display_name ?? row.segment_name,
-			description: row.description ?? null,
-			total_voters: Number(row.total_voters),
-			total_families: Number(row.total_families),
-			status: row.status,
-			color: row.color,
-			centroid_lat: row.centroid_lat != null ? Number(row.centroid_lat) : null,
-			centroid_lng: row.centroid_lng != null ? Number(row.centroid_lng) : null,
-			created_at: row.created_at,
-			metadata: row.metadata ?? {},
-			boundary_geojson: row.boundary_geojson ? JSON.parse(row.boundary_geojson) : null,
-			centroid_geojson: row.centroid_geojson ? JSON.parse(row.centroid_geojson) : null,
-			geometry: row.geometry ? JSON.parse(row.geometry) : null,
-			area_sq_m: row.area_sq_m != null ? Number(row.area_sq_m) : null,
-			bbox_min_lat: row.bbox_min_lat != null ? Number(row.bbox_min_lat) : null,
-			bbox_min_lng: row.bbox_min_lng != null ? Number(row.bbox_min_lng) : null,
-			bbox_max_lat: row.bbox_max_lat != null ? Number(row.bbox_max_lat) : null,
-			bbox_max_lng: row.bbox_max_lng != null ? Number(row.bbox_max_lng) : null,
-			members: membersBySegment[String(row.id)] ?? [],
-		}));
+		const segments = segmentsResult.rows.map((row) => {
+			const boothDistance = normalizeBoothDistanceMetadata((row.metadata ?? {})?.booth_distance);
+			return {
+				id: row.id,
+				segment_name: row.segment_name,
+				display_name: row.display_name ?? row.segment_name,
+				description: row.description ?? null,
+				total_voters: Number(row.total_voters),
+				total_families: Number(row.total_families),
+				status: row.status,
+				color: row.color,
+				centroid_lat: row.centroid_lat != null ? Number(row.centroid_lat) : null,
+				centroid_lng: row.centroid_lng != null ? Number(row.centroid_lng) : null,
+				created_at: row.created_at,
+				metadata: row.metadata ?? {},
+				boundary_geojson: row.boundary_geojson ? JSON.parse(row.boundary_geojson) : null,
+				centroid_geojson: row.centroid_geojson ? JSON.parse(row.centroid_geojson) : null,
+				geometry: row.geometry ? JSON.parse(row.geometry) : null,
+				area_sq_m: row.area_sq_m != null ? Number(row.area_sq_m) : null,
+				bbox_min_lat: row.bbox_min_lat != null ? Number(row.bbox_min_lat) : null,
+				bbox_min_lng: row.bbox_min_lng != null ? Number(row.bbox_min_lng) : null,
+				bbox_max_lat: row.bbox_max_lat != null ? Number(row.bbox_max_lat) : null,
+				bbox_max_lng: row.bbox_max_lng != null ? Number(row.bbox_max_lng) : null,
+				far_voter_count: boothDistance.far_voter_count,
+				missing_booth_location_voter_count: boothDistance.missing_booth_location_voter_count,
+				member_location_missing_voter_count: boothDistance.member_location_missing_voter_count,
+				distance_calculation_type: boothDistance.distance_calculation_type,
+				has_booth_distance_issues: boothDistance.affected_segment,
+				members: membersBySegment[String(row.id)] ?? [],
+			};
+		});
 
 		const runHash = jobRow?.result?.run_hash ?? null;
 		const performance = jobRow?.result

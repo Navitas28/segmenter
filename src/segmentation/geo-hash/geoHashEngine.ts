@@ -3,6 +3,7 @@ import {logger} from '../../config/logger.js';
 import {env} from '../../config/env.js';
 import {resolveScopeAndVoters} from '../scopeResolver.js';
 import {SegmentationResult} from '../types.js';
+import {persistBoothDistanceMetadata} from '../boothDistance.js';
 
 const viz = env.enableSegmentBackendVisualization
 	? (data: Record<string, unknown>, msg: string) => logger.info(data, `[VIZ] ${msg}`)
@@ -113,6 +114,7 @@ export async function runGeoHashSegmentation(electionId: string, nodeId: string,
 		const segmentIds = await insertSegmentsWithGeometry(client, segments, families, electionId, nodeId, version);
 
 		await insertSegmentMembersByFamily(client, segments, segmentIds);
+		await persistBoothDistanceMetadata(client, Array.from(segmentIds.values()));
 
 		const dbWriteDurationMs = Date.now() - dbWriteStartTime;
 

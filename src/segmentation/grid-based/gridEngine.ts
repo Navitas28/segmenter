@@ -11,6 +11,7 @@ import {growRegionsWithOptions} from './regionGrower.js';
 import {buildSegments, Segment} from './segmentBuilder.js';
 import {validateSegments} from './segmentValidator.js';
 import {buildBoothGridDebugSnapshot} from './debugSnapshot.js';
+import {persistBoothDistanceMetadata} from '../boothDistance.js';
 
 const COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
 
@@ -110,6 +111,7 @@ export async function runGridSegmentation(electionId: string, nodeId: string, ve
 
 		// Insert segment members by family
 		await insertSegmentMembers(client, segments, segmentIdMap, units);
+		await persistBoothDistanceMetadata(client, Array.from(segmentIdMap.values()));
 
 		const dbWriteDurationMs = Date.now() - dbWriteStartTime;
 

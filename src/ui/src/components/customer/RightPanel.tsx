@@ -5,6 +5,7 @@ import {Save, Users, Home, ChevronLeft, ChevronRight, Edit3, X, List, Ruler, Map
 import {updateSegment, backfillSegmentsBoundaries} from '../../services/api';
 import {useCustomerStore} from '../../store/useCustomerStore';
 import type {Segment} from '../../types/api';
+import {getSegmentFarVoterCount, getSegmentMissingBoothLocationCount} from '../../services/segmentUtils';
 
 interface RightPanelProps {
 	segments: Segment[];
@@ -68,6 +69,8 @@ const RightPanel = ({segments, selectedSegment, nodeId}: RightPanelProps) => {
 	const totalVoters = segments.reduce((sum, s) => sum + (s.total_voters ?? 0), 0);
 	const totalFamilies = segments.reduce((sum, s) => sum + (s.total_families ?? 0), 0);
 	const avgVoters = segments.length > 0 ? Math.round(totalVoters / segments.length) : 0;
+	const totalFarVoters = segments.reduce((sum, segment) => sum + getSegmentFarVoterCount(segment), 0);
+	const totalMissingBoothLocations = segments.reduce((sum, segment) => sum + getSegmentMissingBoothLocationCount(segment), 0);
 	const voterCounts = segments.map((s) => s.total_voters ?? 0);
 	const minVoters = voterCounts.length > 0 ? Math.min(...voterCounts) : 0;
 	const maxVoters = voterCounts.length > 0 ? Math.max(...voterCounts) : 0;
@@ -128,6 +131,16 @@ const RightPanel = ({segments, selectedSegment, nodeId}: RightPanelProps) => {
 							<div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Range</div>
 							<div className="text-sm font-semibold text-gray-900">
 								{minVoters} - {maxVoters} voters
+							</div>
+						</div>
+						<div className="grid grid-cols-2 gap-3">
+							<div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+								<div className="text-2xl font-bold text-rose-900">{totalFarVoters}</div>
+								<div className="text-xs text-rose-700 mt-1">Voters &gt;= 2 km</div>
+							</div>
+							<div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+								<div className="text-2xl font-bold text-amber-900">{totalMissingBoothLocations}</div>
+								<div className="text-xs text-amber-700 mt-1">Booth location unavailable</div>
 							</div>
 						</div>
 						{segments.length > 0 && (
@@ -238,6 +251,20 @@ const RightPanel = ({segments, selectedSegment, nodeId}: RightPanelProps) => {
 									<span className="text-sm">Families</span>
 								</div>
 								<span className="text-lg font-bold text-gray-900">{selectedSegment.total_families}</span>
+							</div>
+							<div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+								<div className="flex items-center gap-2 text-rose-700">
+									<Ruler size={16} />
+									<span className="text-sm">Voters &gt;= 2 km</span>
+								</div>
+								<span className="text-lg font-bold text-rose-900">{getSegmentFarVoterCount(selectedSegment)}</span>
+							</div>
+							<div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+								<div className="flex items-center gap-2 text-amber-700">
+									<MapPin size={16} />
+									<span className="text-sm">Booth location unavailable</span>
+								</div>
+								<span className="text-lg font-bold text-amber-900">{getSegmentMissingBoothLocationCount(selectedSegment)}</span>
 							</div>
 						</div>
 
